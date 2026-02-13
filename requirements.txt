@@ -1,5 +1,5 @@
-requests
-pandas
-numpy
-pandas-ta
-python-dateutil
+requests==2.31.0
+pandas==2.0.3
+numpy==1.24.3
+pandas-ta==0.3.14b
+python-dateutil==2.8.2

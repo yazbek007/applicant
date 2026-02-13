@@ -8,15 +8,15 @@ import ta
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ========== الإعدادات من متغيرات البيئة ==========
+# ========== Environment Variables ==========
 SYMBOL = os.getenv('SYMBOL', 'BTCUSDT')
 INTERVAL = os.getenv('INTERVAL', '1h')
 NTFY_TOPIC = os.getenv('NTFY_TOPIC', 'crypto_signals')
-CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '60'))          # ثانية
+CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '60'))          # seconds
 PRICE_CHANGE_THRESHOLD = float(os.getenv('PRICE_CHANGE_THRESHOLD', '5.0'))  # %
-PORT = int(os.getenv('PORT', '10000'))  # منفذ health check (Render يمرر PORT تلقائياً)
+PORT = int(os.getenv('PORT', '10000'))  # health check port
 
-# أوزان المؤشرات
+# Indicator weights
 WEIGHTS = {
     'rsi': float(os.getenv('WEIGHT_RSI', '0.30')),
     'bb': float(os.getenv('WEIGHT_BB', '0.20')),
@@ -24,21 +24,18 @@ WEIGHTS = {
     'sr': float(os.getenv('WEIGHT_SR', '0.15')),
     'div': float(os.getenv('WEIGHT_DIV', '0.10'))
 }
-# =================================================
+# ============================================
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
-    """معالج بسيط للـ Health Check"""
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
         self.wfile.write(b'OK')
     def log_message(self, format, *args):
-        # إلغاء التسجيل لتجنب الإزعاج في logs
-        pass
+        pass  # suppress logs
 
 def run_health_server():
-    """تشغيل خادم HTTP في خيط منفصل"""
     server = HTTPServer(('0.0.0.0', PORT), HealthCheckHandler)
     print(f"✅ Health check server running on port {PORT}")
     server.serve_forever()
@@ -67,7 +64,7 @@ class CryptoSignalBot:
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             return df
         except Exception as e:
-            print(f"❌ خطأ في جلب البيانات: {e}")
+            print(f"❌ Error fetching data: {e}")
             return None
 
     def calculate_indicators(self, df):
@@ -86,13 +83,13 @@ class CryptoSignalBot:
         df['bb_middle'] = bb.bollinger_mavg()
         df['bb_lower'] = bb.bollinger_lband()
         
-        # الدعم والمقاومة (آخر 20 شمعة)
+        # Support/Resistance (last 20 candles)
         df['resistance'] = df['high'].rolling(window=20).max()
         df['support'] = df['low'].rolling(window=20).min()
         
         return df
 
-    # دوال التقييم
+    # Scoring functions
     def score_rsi(self, rsi_value):
         if pd.isna(rsi_value):
             return 0
@@ -181,29 +178,29 @@ class CryptoSignalBot:
         elif latest['macd'] < latest['macd_signal'] and prev['macd_histogram'] >= 0:
             bear_score += macd_score * WEIGHTS['macd']
 
-        # دعم/مقاومة
+        # Support/Resistance
         if latest['close'] <= latest['support'] * 1.01:
             bull_score += sr_score * WEIGHTS['sr']
         elif latest['close'] >= latest['resistance'] * 0.99:
             bear_score += sr_score * WEIGHTS['sr']
 
-        # دايفرجنس
+        # Divergence
         if div_score > 50:
             bull_score += div_score * WEIGHTS['div']
         elif div_score > 0:
             bear_score += div_score * WEIGHTS['div']
 
         if bull_score > bear_score:
-            signal_type = "قاع محتمل"
+            signal_type = "Potential Bottom"
             strength_pct = bull_score
         elif bear_score > bull_score:
-            signal_type = "قمة محتملة"
+            signal_type = "Potential Top"
             strength_pct = bear_score
         else:
             signal_type = None
             strength_pct = 0
 
-        # تجاهل الإشارات الضعيفة (<20%)
+        # Ignore weak signals (<20%)
         if strength_pct < 20:
             signal_type = None
 
@@ -213,9 +210,9 @@ class CryptoSignalBot:
         if not self.signal_price:
             return False, 0
         change_percent = ((current_price - self.signal_price) / self.signal_price) * 100
-        if self.signal_direction == "قمة" and change_percent >= PRICE_CHANGE_THRESHOLD:
+        if self.signal_direction == "Top" and change_percent >= PRICE_CHANGE_THRESHOLD:
             return True, change_percent
-        elif self.signal_direction == "قاع" and change_percent <= -PRICE_CHANGE_THRESHOLD:
+        elif self.signal_direction == "Bottom" and change_percent <= -PRICE_CHANGE_THRESHOLD:
             return True, change_percent
         elif abs(change_percent) >= PRICE_CHANGE_THRESHOLD:
             return True, change_percent
@@ -225,17 +222,41 @@ class CryptoSignalBot:
         url = f"https://ntfy.sh/{NTFY_TOPIC}"
         headers = {"Title": title, "Priority": str(priority), "Tags": ",".join(tags)}
         try:
-            requests.post(url, data=message.encode('utf-8'), headers=headers)
-            print(f"✅ تم إرسال إشعار: {title}")
+            response = requests.post(url, data=message.encode('utf-8'), headers=headers)
+            if response.status_code == 200:
+                print(f"✅ Notification sent: {title}")
+            else:
+                print(f"❌ Failed to send notification: {response.status_code}")
         except Exception as e:
-            print(f"❌ فشل إرسال الإشعار: {e}")
+            print(f"❌ Error sending notification: {e}")
+
+    def send_startup_notification(self):
+        """Send a startup notification to ntfy"""
+        title = f"🚀 Bot Started - {SYMBOL}"
+        message = f"""
+Bot is now running and monitoring {SYMBOL} ({INTERVAL})
+
+⚙️ Settings:
+• Interval: {INTERVAL}
+• Price change threshold: {PRICE_CHANGE_THRESHOLD}%
+• Check interval: {CHECK_INTERVAL}s
+• Weights: {WEIGHTS}
+
+You will receive notifications for:
+• Strong potential tops/bottoms (strength >20%)
+• Price movements >{PRICE_CHANGE_THRESHOLD}% after a signal
+        """
+        self.send_ntfy_notification(title, message, tags=["rocket"], priority=3)
 
     def run(self):
-        print(f"🚀 بوت الكشف عن القمم والقيعان لـ {SYMBOL} ({INTERVAL})")
-        print(f"📱 إشعارات إلى: https://ntfy.sh/{NTFY_TOPIC}")
-        print(f"⚡ عتبة تحديث السعر: {PRICE_CHANGE_THRESHOLD}%")
-        print(f"📊 أوزان المؤشرات: {WEIGHTS}")
+        print(f"🚀 Bot started for {SYMBOL} ({INTERVAL})")
+        print(f"📱 Notifications to: https://ntfy.sh/{NTFY_TOPIC}")
+        print(f"⚡ Price update threshold: {PRICE_CHANGE_THRESHOLD}%")
+        print(f"📊 Indicator weights: {WEIGHTS}")
         print("-" * 50)
+
+        # Send startup notification
+        self.send_startup_notification()
 
         while True:
             try:
@@ -250,18 +271,17 @@ class CryptoSignalBot:
                 current_price = df.iloc[-1]['close']
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                # إشارة جديدة
+                # New signal
                 if signal_type:
-                    # تجنب التكرار (مرة واحدة لكل شمعة)
                     last_signal_key = f"{signal_type}_{df.iloc[-1]['timestamp']}"
                     if self.last_signal != last_signal_key:
-                        # تحديد الأولوية حسب القوة
+                        # Priority based on strength
                         if strength_pct >= 80:
                             priority = 5
                             tags = ["rotating_light", "warning"]
                         elif strength_pct >= 60:
                             priority = 4
-                            tags = ["chart_increasing" if "قاع" in signal_type else "chart_decreasing"]
+                            tags = ["chart_increasing" if "Bottom" in signal_type else "chart_decreasing"]
                         elif strength_pct >= 40:
                             priority = 3
                             tags = ["information_source"]
@@ -269,55 +289,56 @@ class CryptoSignalBot:
                             priority = 2
                             tags = ["grey_question"]
 
-                        title = f"{'🔺' if 'قمة' in signal_type else '🔻'} {signal_type} على {SYMBOL}"
+                        emoji = "🔺" if "Top" in signal_type else "🔻"
+                        title = f"{emoji} {signal_type} on {SYMBOL}"
                         message = f"""
-📈 السعر: {current_price:.4f} USDT
-⏱ الوقت: {current_time}
-💪 القوة: {strength_pct:.1f}%
-⚡ تحديث إذا تجاوز {PRICE_CHANGE_THRESHOLD}%
+📈 Price: {current_price:.4f} USDT
+⏱ Time: {current_time}
+💪 Strength: {strength_pct:.1f}%
+⚡ Will update if price moves >{PRICE_CHANGE_THRESHOLD}%
                         """
                         self.send_ntfy_notification(title, message, tags, priority)
 
                         self.last_signal = last_signal_key
                         self.signal_price = current_price
-                        self.signal_direction = signal_type.split()[0]
+                        self.signal_direction = signal_type.split()[1]  # "Top" or "Bottom"
                         self.signal_strength_pct = strength_pct
                         self.last_notification_time = current_time
 
-                        print(f"[{current_time}] ✅ إشارة جديدة: {signal_type} بقوة {strength_pct:.1f}%")
+                        print(f"[{current_time}] ✅ New signal: {signal_type} with strength {strength_pct:.1f}%")
 
-                # تحديث 5%
+                # Price update check (5% move)
                 if self.signal_price:
                     should_update, change_percent = self.check_price_update(current_price)
                     if should_update and self.last_notification_time:
-                        # إرسال تحديث مرة كل ساعة على الأكثر
+                        # Avoid spamming: at most once per hour
                         last_time = datetime.strptime(self.last_notification_time, "%Y-%m-%d %H:%M:%S")
                         now = datetime.now()
-                        if (now - last_time).total_seconds() > 3600:  # ساعة
-                            direction = "صعد" if change_percent > 0 else "هبط"
-                            title = f"🔄 تحديث {SYMBOL}: {direction} {abs(change_percent):.1f}%"
+                        if (now - last_time).total_seconds() > 3600:  # 1 hour
+                            direction = "up" if change_percent > 0 else "down"
+                            title = f"🔄 Update {SYMBOL}: moved {direction} {abs(change_percent):.1f}%"
                             message = f"""
-📊 آخر إشارة: {self.signal_direction} بقوة {self.signal_strength_pct:.0f}% @ {self.signal_price:.4f}
-💰 السعر الآن: {current_price:.4f} ({change_percent:+.1f}%)
+📊 Last signal: {self.signal_direction} (strength {self.signal_strength_pct:.0f}%) @ {self.signal_price:.4f}
+💰 Current price: {current_price:.4f} ({change_percent:+.1f}%)
 ⏱ {current_time}
                             """
-                            self.send_ntfy_notification(title, message, ["arrow_up" if change_percent>0 else "arrow_down"], 3)
+                            self.send_ntfy_notification(title, message, tags=["arrow_up" if change_percent>0 else "arrow_down"], priority=3)
                             self.last_notification_time = current_time
 
                 time.sleep(CHECK_INTERVAL)
 
             except KeyboardInterrupt:
-                print("\n🛑 إيقاف البوت")
+                print("\n🛑 Bot stopped")
                 break
             except Exception as e:
-                print(f"⚠️ خطأ غير متوقع: {e}")
+                print(f"⚠️ Unexpected error: {e}")
                 time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
-    # تشغيل خادم Health Check في خيط منفصل
+    # Start health check server in a separate thread
     health_thread = Thread(target=run_health_server, daemon=True)
     health_thread.start()
     
-    # تشغيل البوت
+    # Start the bot
     bot = CryptoSignalBot()
     bot.run()

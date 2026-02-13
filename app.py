@@ -4,14 +4,14 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import pandas_ta as ta  # استبدال ta بـ pandas_ta
+import ta  # استخدام المكتبة القديمة الموثوقة
 
-# ========== الإعدادات من متغيرات البيئة (تُضبط في Render) ==========
+# ========== الإعدادات ==========
 SYMBOL = os.getenv('SYMBOL', 'BTCUSDT')
 INTERVAL = os.getenv('INTERVAL', '1h')
 NTFY_TOPIC = os.getenv('NTFY_TOPIC', 'crypto_signals')
-CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '60'))  # ثانية
-PRICE_CHANGE_THRESHOLD = float(os.getenv('PRICE_CHANGE_THRESHOLD', '5.0'))  # %
+CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '60'))
+PRICE_CHANGE_THRESHOLD = float(os.getenv('PRICE_CHANGE_THRESHOLD', '5.0'))
 
 # أوزان المؤشرات
 WEIGHTS = {
@@ -21,7 +21,7 @@ WEIGHTS = {
     'sr': float(os.getenv('WEIGHT_SR', '0.15')),
     'div': float(os.getenv('WEIGHT_DIV', '0.10'))
 }
-# ===================================================================
+# ===============================
 
 class CryptoSignalBot:
     def __init__(self):
@@ -32,7 +32,7 @@ class CryptoSignalBot:
         self.last_notification_time = None
 
     def get_klines(self, limit=100):
-        url = f"https://api.binance.com/api/v3/klines"
+        url = "https://api.binance.com/api/v3/klines"
         params = {'symbol': SYMBOL, 'interval': INTERVAL, 'limit': limit}
         try:
             response = requests.get(url, params=params)
@@ -51,32 +51,25 @@ class CryptoSignalBot:
             return None
 
     def calculate_indicators(self, df):
-        # RSI (المدة 14)
-        df['rsi'] = ta.rsi(df['close'], length=14)
-
+        # RSI
+        df['rsi'] = ta.momentum.RSIIndicator(df['close'], window=14).rsi()
+        
         # MACD
-        macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
-        df = pd.concat([df, macd_df], axis=1)  # يضيف أعمدة MACD_12_26_9, MACDs_12_26_9, MACDh_12_26_9
-        # نعيد تسميتها للاختصار
-        df.rename(columns={
-            'MACD_12_26_9': 'macd',
-            'MACDs_12_26_9': 'macd_signal',
-            'MACDh_12_26_9': 'macd_histogram'
-        }, inplace=True)
-
-        # Bollinger Bands (20,2)
-        bb_df = ta.bbands(df['close'], length=20, std=2)
-        df = pd.concat([df, bb_df], axis=1)
-        df.rename(columns={
-            'BBU_20_2.0': 'bb_upper',
-            'BBM_20_2.0': 'bb_middle',
-            'BBL_20_2.0': 'bb_lower'
-        }, inplace=True)
-
-        # الدعم والمقاومة (آخر 20 شمعة)
+        macd = ta.trend.MACD(df['close'])
+        df['macd'] = macd.macd()
+        df['macd_signal'] = macd.macd_signal()
+        df['macd_histogram'] = macd.macd_diff()
+        
+        # Bollinger Bands
+        bb = ta.volatility.BollingerBands(df['close'], window=20, window_dev=2)
+        df['bb_upper'] = bb.bollinger_hband()
+        df['bb_middle'] = bb.bollinger_mavg()
+        df['bb_lower'] = bb.bollinger_lband()
+        
+        # الدعم والمقاومة
         df['resistance'] = df['high'].rolling(window=20).max()
         df['support'] = df['low'].rolling(window=20).min()
-
+        
         return df
 
     def score_rsi(self, rsi_value):
@@ -97,9 +90,6 @@ class CryptoSignalBot:
             return 100
         if close <= lower:
             return 100
-        band_width = upper - lower
-        if band_width == 0:
-            return 0
         if close >= upper * 0.99:
             return 70
         if close <= lower * 1.01:
@@ -121,26 +111,10 @@ class CryptoSignalBot:
     def score_sr(self, close, support, resistance):
         if pd.isna(support) or pd.isna(resistance):
             return 0
-        dist_to_support = abs(close - support) / close * 100
-        dist_to_resistance = abs(close - resistance) / close * 100
         if close <= support * 1.01:
-            return 100 - min(100, dist_to_support * 10)
+            return 100
         if close >= resistance * 0.99:
-            return 100 - min(100, dist_to_resistance * 10)
-        return 0
-
-    def score_divergence(self, df):
-        if len(df) < 10:
-            return 0
-        recent = df.iloc[-5:]
-        price_change = recent['close'].iloc[-1] - recent['close'].iloc[0]
-        rsi_change = recent['rsi'].iloc[-1] - recent['rsi'].iloc[0]
-        if price_change < 0 and rsi_change > 5:
             return 100
-        if price_change > 0 and rsi_change < -5:
-            return 100
-        if (price_change < 0 and rsi_change > 2) or (price_change > 0 and rsi_change < -2):
-            return 50
         return 0
 
     def detect_signals(self, df):
@@ -151,11 +125,11 @@ class CryptoSignalBot:
         bb_score = self.score_bb(latest['close'], latest['bb_upper'], latest['bb_lower'])
         macd_score = self.score_macd(latest['macd'], latest['macd_signal'], latest['macd_histogram'], prev['macd_histogram'])
         sr_score = self.score_sr(latest['close'], latest['support'], latest['resistance'])
-        div_score = self.score_divergence(df)
 
         bull_score = 0
         bear_score = 0
 
+        # تجميع النقاط
         if latest['rsi'] < 30:
             bull_score += rsi_score * WEIGHTS['rsi']
         elif latest['rsi'] > 70:
@@ -176,57 +150,20 @@ class CryptoSignalBot:
         elif latest['close'] >= latest['resistance'] * 0.99:
             bear_score += sr_score * WEIGHTS['sr']
 
-        if div_score > 50:
-            bull_score += div_score * WEIGHTS['div']
-        elif div_score > 0:
-            bear_score += div_score * WEIGHTS['div']
-
-        total_bull = bull_score
-        total_bear = bear_score
-
-        if total_bull > total_bear:
+        if bull_score > bear_score:
             signal_type = "قاع محتمل"
-            strength_pct = total_bull
-            reasons = self._build_reasons(rsi_score, bb_score, macd_score, sr_score, div_score, latest)
-        elif total_bear > total_bull:
+            strength_pct = bull_score
+        elif bear_score > bull_score:
             signal_type = "قمة محتملة"
-            strength_pct = total_bear
-            reasons = self._build_reasons(rsi_score, bb_score, macd_score, sr_score, div_score, latest)
+            strength_pct = bear_score
         else:
             signal_type = None
             strength_pct = 0
-            reasons = []
 
         if strength_pct < 20:
             signal_type = None
 
-        return signal_type, strength_pct, reasons
-
-    def _build_reasons(self, rsi_score, bb_score, macd_score, sr_score, div_score, latest):
-        reasons = []
-        if rsi_score > 30:
-            reasons.append(f"RSI {latest['rsi']:.1f} (قوة {rsi_score:.0f}%)")
-        if bb_score > 30:
-            reasons.append(f"Bollinger Bands (قوة {bb_score:.0f}%)")
-        if macd_score > 30:
-            reasons.append(f"MACD (قوة {macd_score:.0f}%)")
-        if sr_score > 30:
-            reasons.append(f"دعم/مقاومة (قوة {sr_score:.0f}%)")
-        if div_score > 30:
-            reasons.append(f"دايفرجنس (قوة {div_score:.0f}%)")
-        return reasons
-
-    def check_price_update(self, current_price):
-        if not self.signal_price:
-            return False, 0
-        change_percent = ((current_price - self.signal_price) / self.signal_price) * 100
-        if self.signal_direction == "قمة" and change_percent >= PRICE_CHANGE_THRESHOLD:
-            return True, change_percent
-        elif self.signal_direction == "قاع" and change_percent <= -PRICE_CHANGE_THRESHOLD:
-            return True, change_percent
-        elif abs(change_percent) >= PRICE_CHANGE_THRESHOLD:
-            return True, change_percent
-        return False, change_percent
+        return signal_type, strength_pct
 
     def send_ntfy_notification(self, title, message, tags=[], priority=3):
         url = f"https://ntfy.sh/{NTFY_TOPIC}"
@@ -235,83 +172,39 @@ class CryptoSignalBot:
             requests.post(url, data=message.encode('utf-8'), headers=headers)
             print(f"✅ إشعار: {title}")
         except Exception as e:
-            print(f"❌ خطإشعار: {e}")
+            print(f"❌ خطأ في الإشعار: {e}")
 
     def run(self):
         print(f"🚀 بوت الكشف عن القمم والقيعان - {SYMBOL} ({INTERVAL})")
         print(f"📱 إشعارات: https://ntfy.sh/{NTFY_TOPIC}")
-        print(f"📊 أوزان المؤشرات: {WEIGHTS}")
         print("-" * 50)
 
         while True:
             try:
-                df = self.get_klines(100)
+                df = self.get_klines()
                 if df is None:
                     time.sleep(CHECK_INTERVAL)
                     continue
 
                 df = self.calculate_indicators(df)
-                signal_type, strength_pct, reasons = self.detect_signals(df)
+                signal_type, strength_pct = self.detect_signals(df)
 
                 current_price = df.iloc[-1]['close']
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
                 if signal_type:
-                    if self.last_signal != f"{signal_type}_{df.iloc[-1]['timestamp']}":
-                        if strength_pct >= 80:
-                            priority = 5
-                            tags = ["rotating_light", "warning"]
-                        elif strength_pct >= 60:
-                            priority = 4
-                            tags = ["chart_increasing" if "قاع" in signal_type else "chart_decreasing"]
-                        elif strength_pct >= 40:
-                            priority = 3
-                            tags = ["information_source"]
-                        else:
-                            priority = 2
-                            tags = ["grey_question"]
-
-                        title = f"{'🔺' if 'قمة' in signal_type else '🔻'} {signal_type} على {SYMBOL} بقوة {strength_pct:.0f}%"
-                        message = f"""
+                    title = f"{'🔺' if 'قمة' in signal_type else '🔻'} {signal_type} على {SYMBOL}"
+                    message = f"""
 📈 السعر: {current_price:.4f} USDT
 ⏱ الوقت: {current_time}
-💪 القوة الإجمالية: {strength_pct:.1f}%
-
-🔍 تفاصيل المؤشرات:
-{chr(10).join(['• ' + r for r in reasons]) if reasons else '• لا توجد أسباب مفصلة'}
-
-⚡ عتبة التحديث: {PRICE_CHANGE_THRESHOLD}%
-                        """
-                        self.send_ntfy_notification(title, message, tags, priority)
-
-                        self.last_signal = f"{signal_type}_{df.iloc[-1]['timestamp']}"
-                        self.signal_price = current_price
-                        self.signal_direction = signal_type.split()[0]
-                        self.signal_strength_pct = strength_pct
-                        self.last_notification_time = current_time
-
-                        print(f"[{current_time}] ✅ إشارة {signal_type} بقوة {strength_pct:.1f}%")
-
-                if self.signal_price:
-                    should_update, change_percent = self.check_price_update(current_price)
-                    if should_update and self.last_notification_time:
-                        last_time = datetime.strptime(self.last_notification_time, "%Y-%m-%d %H:%M:%S")
-                        now = datetime.now()
-                        if (now - last_time).total_seconds() > 3600:
-                            direction = "صعد" if change_percent > 0 else "هبط"
-                            title = f"🔄 تحديث {SYMBOL}: {direction} {abs(change_percent):.1f}%"
-                            message = f"""
-📊 آخر إشارة: {self.signal_direction} بقوة {self.signal_strength_pct:.0f}% @ {self.signal_price:.4f}
-💰 السعر الآن: {current_price:.4f} ({change_percent:+.1f}%)
-⏱ {current_time}
-                            """
-                            self.send_ntfy_notification(title, message, ["arrow_up" if change_percent>0 else "arrow_down"], 3)
-                            self.last_notification_time = current_time
+💪 القوة: {strength_pct:.1f}%
+                    """
+                    self.send_ntfy_notification(title, message, ["warning"], 4)
+                    print(f"[{current_time}] ✅ {signal_type} بقوة {strength_pct:.1f}%")
 
                 time.sleep(CHECK_INTERVAL)
 
             except KeyboardInterrupt:
-                print("\n🛑 إيقاف البوت")
                 break
             except Exception as e:
                 print(f"خطأ: {e}")

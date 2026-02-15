@@ -1024,28 +1024,31 @@ class Backtester:
         self.running = False
 
     def fetch_historical_data(self, symbol: str, months: int, timeframe: str) -> Optional[List]:
-        """جلب بيانات تاريخية لعدد محدد من الأشهر مع التعامل مع pagination"""
+        """جلب بيانات تاريخية لعدد محدد من الأشهر"""
         all_candles = []
-        # حساب وقت البدء: months شهر مضت
-        since = self.binance.exchange.parse8601((datetime.now() - timedelta(days=30*months)).isoformat())
-        limit = 1000  # الحد الأقصى لكل طلب في binance
-
+    
+        # ✅ الطريقة الصحيحة لحساب التاريخ
+        now_ms = int(time.time() * 1000)
+        since = now_ms - (months * 30 * 24 * 60 * 60 * 1000)  # months مضت
+    
+        limit = 1000
+    
         while True:
             try:
-                candles = self.binance.exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
+                candles = self.binance.exchange.fetch_ohlcv(
+                    symbol, timeframe, since=since, limit=limit
+                )
                 if not candles:
                     break
                 all_candles.extend(candles)
                 if len(candles) < limit:
                     break
-                # تحديث since إلى وقت آخر شمعة + 1 ms
                 since = candles[-1][0] + 1
-                # تجنب rate limit
                 time.sleep(0.5)
             except Exception as e:
                 logger.error(f"Error fetching historical data for {symbol}: {e}")
                 break
-
+    
         logger.info(f"Fetched {len(all_candles)} candles for {symbol}")
         return all_candles if all_candles else None
 

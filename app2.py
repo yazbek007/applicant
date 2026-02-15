@@ -993,3 +993,377 @@ if __name__ == '__main__':
 
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
+"""
+إضافة باكتيست متكامل لاختبار أداء الإشارات على بيانات تاريخية
+يضاف إلى نهاية الملف app1.py
+"""
+
+import itertools
+from collections import defaultdict
+
+# ======================
+# إعدادات الباكتيست
+# ======================
+class BacktestConfig:
+    MONTHS = 6                      # عدد الأشهر للاختبار
+    TIMEFRAME = AppConfig.TIMEFRAME  # نفس الإطار المستخدم في الكشف
+    PROFIT_TARGET_PCT = 2.0          # النسبة المئوية للحركة المتوقعة بعد الإشارة (2%)
+    MAX_BARS_AHEAD = 10               # عدد الشموع المستقبلية للتحقق من النجاح
+    CONFIDENCE_THRESHOLD = 50         # حد الثقة الأدنى للإشارات المشمولة في الاختبار
+    EXIT_ON_OPPOSITE_SIGNAL = False   # هل نخرج عند إشارة معاكسة؟
+
+# ======================
+# باكتيست
+# ======================
+class Backtester:
+    def __init__(self, detector):
+        self.detector = detector
+        self.binance = detector.binance
+        self.results = {}
+        self.running = False
+
+    def fetch_historical_data(self, symbol: str, months: int, timeframe: str) -> Optional[List]:
+        """جلب بيانات تاريخية لعدد محدد من الأشهر مع التعامل مع pagination"""
+        all_candles = []
+        # حساب وقت البدء: months شهر مضت
+        since = self.binance.exchange.parse8601((datetime.now() - timedelta(days=30*months)).isoformat())
+        limit = 1000  # الحد الأقصى لكل طلب في binance
+
+        while True:
+            try:
+                candles = self.binance.exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
+                if not candles:
+                    break
+                all_candles.extend(candles)
+                if len(candles) < limit:
+                    break
+                # تحديث since إلى وقت آخر شمعة + 1 ms
+                since = candles[-1][0] + 1
+                # تجنب rate limit
+                time.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Error fetching historical data for {symbol}: {e}")
+                break
+
+        logger.info(f"Fetched {len(all_candles)} candles for {symbol}")
+        return all_candles if all_candles else None
+
+    def run_backtest_for_coin(self, coin: CoinConfig) -> Dict:
+        """تشغيل الباكتيست لعملة واحدة"""
+        logger.info(f"Running backtest for {coin.symbol}...")
+        candles = self.fetch_historical_data(coin.symbol, BacktestConfig.MONTHS, BacktestConfig.TIMEFRAME)
+        if not candles or len(candles) < 100:
+            return {"error": "Insufficient data"}
+
+        # تحويل البيانات إلى قوائم منفصلة
+        timestamps = [c[0] for c in candles]
+        opens = [c[1] for c in candles]
+        highs = [c[2] for c in candles]
+        lows = [c[3] for c in candles]
+        closes = [c[4] for c in candles]
+        volumes = [c[5] for c in candles]
+
+        total_candles = len(candles)
+        signals = []  # قائمة بالإشارات التي سنختبرها
+
+        # محاكاة الوقت الحقيقي: نمر على كل شمعة (نبدأ بعدد كافٍ من الشموع لحساب المؤشرات)
+        min_bars_needed = 60  # عدد كافٍ لمعظم المؤشرات
+        for i in range(min_bneeded, total_candles):
+            # استخراج البيانات حتى الشمعة i (الشمعة الحالية)
+            current_highs = highs[:i+1]
+            current_lows = lows[:i+1]
+            current_closes = closes[:i+1]
+            current_volumes = volumes[:i+1]
+
+            # حساب المؤشرات يدوياً (نحتاج إلى إعادة استخدام دوال TechnicalIndicators)
+            # هذا قد يكون مكلفاً، لكن للباك تست يمكن تحمله
+            rsi = TechnicalIndicators.rsi(current_closes, 14)
+            atr = TechnicalIndicators.atr(current_highs, current_lows, current_closes, 14)
+            adx = TechnicalIndicators.adx(current_highs, current_lows, current_closes, 14)
+
+            # نحتاج فقط آخر القيم
+            current_rsi = rsi[-1] if rsi and rsi[-1] is not None else 50
+            current_atr = atr[-1] if atr and atr[-1] is not None else 0
+            current_adx = adx[-1] if adx and adx[-1] is not None else 20
+
+            # تحديد market regime
+            market_regime = 'trend' if current_adx > 25 else 'ranging'
+
+            # Pivot points
+            pivot_highs, pivot_lows = TechnicalIndicators.pivot_points(
+                current_highs, current_lows, AppConfig.PIVOT_LEFT, AppConfig.PIVOT_RIGHT
+            )
+
+            # Near pivot
+            near_pivot_high = False
+            near_pivot_low = False
+            valid_pivot_highs = [idx for idx, v in enumerate(pivot_highs) if v]
+            valid_pivot_lows = [idx for idx, v in enumerate(pivot_lows) if v]
+
+            if valid_pivot_highs and current_atr > 0:
+                last_pivot_idx = valid_pivot_highs[-1]
+                if i - last_pivot_idx <= 20:
+                    if abs(closes[i] - highs[last_pivot_idx]) <= current_atr * AppConfig.MIN_PIVOT_DISTANCE_ATR:
+                        near_pivot_high = True
+            if valid_pivot_lows and current_atr > 0:
+                last_pivot_idx = valid_pivot_lows[-1]
+                if i - last_pivot_idx <= 20:
+                    if abs(closes[i] - lows[last_pivot_idx]) <= current_atr * AppConfig.MIN_PIVOT_DISTANCE_ATR:
+                        near_pivot_low = True
+
+            # Fractals
+            fractal_up, fractal_down = TechnicalIndicators.fractal(
+                current_highs, current_lows, AppConfig.FRACTAL_PERIOD
+            )
+            last_fractal_up = any(fractal_up[-AppConfig.FRACTAL_PERIOD*3:])
+            last_fractal_down = any(fractal_down[-AppConfig.FRACTAL_PERIOD*3:])
+
+            # Divergence
+            divergence = TechnicalIndicators.detect_divergence(
+                current_closes, rsi, window=40
+            )
+
+            # Market structure
+            ms = TechnicalIndicators.market_structure(
+                current_highs, current_lows, current_closes, pivot_highs, pivot_lows
+            )
+
+            # Volume spike
+            if i >= 20:
+                avg_vol = sum(current_volumes[-20:-1]) / 19
+                volume_spike = current_volumes[-1] > avg_vol * 1.5
+            else:
+                volume_spike = False
+
+            # ATR percent
+            atr_percent = (current_atr / closes[i]) * 100 if closes[i] > 0 else 0
+
+            # Multi-timeframe confirmation (لا نستخدمها في الباك تست لعدم وجود بيانات الإطار الأعلى)
+            htf_conf = {'trend_up': False, 'trend_down': False}
+
+            # حساب الثقة
+            top_conf = self.detector._calculate_confidence(
+                'TOP', closes[i], current_closes, rsi, atr, current_adx,
+                near_pivot_high, near_pivot_low,
+                last_fractal_up, last_fractal_down,
+                divergence, ms, volume_spike, htf_conf, market_regime
+            )
+            bottom_conf = self.detector._calculate_confidence(
+                'BOTTOM', closes[i], current_closes, rsi, atr, current_adx,
+                near_pivot_high, near_pivot_low,
+                last_fractal_up, last_fractal_down,
+                divergence, ms, volume_spike, htf_conf, market_regime
+            )
+
+            # تطبيق عتبة الثقة
+            if top_conf >= BacktestConfig.CONFIDENCE_THRESHOLD and top_conf > bottom_conf:
+                signals.append({
+                    'index': i,
+                    'type': 'TOP',
+                    'price': closes[i],
+                    'timestamp': timestamps[i],
+                    'confidence': top_conf,
+                    'atr': current_atr
+                })
+            elif bottom_conf >= BacktestConfig.CONFIDENCE_THRESHOLD:
+                signals.append({
+                    'index': i,
+                    'type': 'BOTTOM',
+                    'price': closes[i],
+                    'timestamp': timestamps[i],
+                    'confidence': bottom_conf,
+                    'atr': current_atr
+                })
+
+        logger.info(f"Generated {len(signals)} signals for {coin.symbol}")
+
+        # تقييم الإشارات
+        results = []
+        for sig in signals:
+            idx = sig['index']
+            entry_price = sig['price']
+            signal_type = sig['type']
+            atr_val = sig['atr'] or 0
+
+            # نحدد نافذة التحقق: عدد محدود من الشموع المستقبلية
+            end_idx = min(idx + BacktestConfig.MAX_BARS_AHEAD, total_candles - 1)
+            success = False
+            exit_price = entry_price
+            exit_reason = "timeout"
+
+            for j in range(idx + 1, end_idx + 1):
+                current_price = closes[j]
+                if signal_type == 'TOP':
+                    # نتوقع هبوط: نبحث عن انخفاض بنسبة PROFIT_TARGET_PCT
+                    if (entry_price - current_price) / entry_price * 100 >= BacktestConfig.PROFIT_TARGET_PCT:
+                        success = True
+                        exit_price = current_price
+                        exit_reason = "target_hit"
+                        break
+                    # إذا ارتفع أكثر من نسبة معينة (مثلاً 1%)، نعتبر فشلاً (وقف خسارة)
+                    elif (current_price - entry_price) / entry_price * 100 > 1.0:
+                        success = False
+                        exit_price = current_price
+                        exit_reason = "stop_loss"
+                        break
+                else:  # BOTTOM
+                    if (current_price - entry_price) / entry_price * 100 >= BacktestConfig.PROFIT_TARGET_PCT:
+                        success = True
+                        exit_price = current_price
+                        exit_reason = "target_hit"
+                        break
+                    elif (entry_price - current_price) / entry_price * 100 > 1.0:
+                        success = False
+                        exit_price = current_price
+                        exit_reason = "stop_loss"
+                        break
+
+            # حساب الربح/الخسارة
+            if signal_type == 'TOP':
+                pnl_pct = (entry_price - exit_price) / entry_price * 100
+            else:
+                pnl_pct = (exit_price - entry_price) / entry_price * 100
+
+            results.append({
+                'timestamp': datetime.fromtimestamp(sig['timestamp']/1000).isoformat(),
+                'type': signal_type,
+                'entry': entry_price,
+                'exit': exit_price,
+                'pnl_pct': pnl_pct,
+                'success': success,
+                'confidence': sig['confidence'],
+                'exit_reason': exit_reason
+            })
+
+        # تحليل النتائج
+        total = len(results)
+        if total == 0:
+            return {"symbol": coin.symbol, "total_signals": 0, "message": "No signals generated"}
+
+        successful = sum(1 for r in results if r['success'])
+        failed = total - successful
+        win_rate = successful / total * 100 if total > 0 else 0
+        avg_pnl = sum(r['pnl_pct'] for r in results) / total
+        total_pnl = sum(r['pnl_pct'] for r in results)
+
+        # تفصيل حسب النوع
+        tops = [r for r in results if r['type'] == 'TOP']
+        bottoms = [r for r in results if r['type'] == 'BOTTOM']
+        tops_win = sum(1 for r in tops if r['success'])
+        bottoms_win = sum(1 for r in bottoms if r['success'])
+
+        return {
+            "symbol": coin.symbol,
+            "total_signals": total,
+            "successful": successful,
+            "failed": failed,
+            "win_rate": round(win_rate, 2),
+            "avg_pnl": round(avg_pnl, 2),
+            "total_pnl": round(total_pnl, 2),
+            "tops": len(tops),
+            "tops_win": tops_win,
+            "tops_win_rate": round(tops_win/len(tops)*100, 2) if tops else 0,
+            "bottoms": len(bottoms),
+            "bottoms_win": bottoms_win,
+            "bottoms_win_rate": round(bottoms_win/len(bottoms)*100, 2) if bottoms else 0,
+            "details": results[-20:]  # آخر 20 إشارة للعرض
+        }
+
+    def run_all(self) -> Dict:
+        """تشغيل الباكتيست على جميع العملات"""
+        self.running = True
+        all_results = {}
+        for coin in AppConfig.COINS:
+            if not coin.enabled:
+                continue
+            try:
+                res = self.run_backtest_for_coin(coin)
+                all_results[coin.symbol] = res
+            except Exception as e:
+                logger.error(f"Backtest error for {coin.symbol}: {e}")
+                all_results[coin.symbol] = {"error": str(e)}
+        self.running = False
+        self.results = all_results
+        return all_results
+
+    def generate_report(self) -> str:
+        """توليد تقرير نصي للنتائج"""
+        if not self.results:
+            return "No backtest results available."
+
+        lines = []
+        lines.append("📊 **Backtest Results (Last 6 Months)**")
+        lines.append("")
+
+        total_signals = 0
+        total_success = 0
+        total_pnl = 0.0
+
+        for symbol, res in self.results.items():
+            if "error" in res:
+                lines.append(f"❌ {symbol}: {res['error']}")
+                continue
+            lines.append(f"**{symbol}**")
+            lines.append(f"- Signals: {res['total_signals']}")
+            lines.append(f"- Win Rate: {res['win_rate']}% ({res['successful']}/{res['total_signals']})")
+            lines.append(f"- Avg PnL: {res['avg_pnl']}%")
+            lines.append(f"- Total PnL: {res['total_pnl']}%")
+            lines.append(f"  Tops: {res['tops']} (win: {res['tops_win_rate']}%)")
+            lines.append(f"  Bottoms: {res['bottoms']} (win: {res['bottoms_win_rate']}%)")
+            lines.append("")
+
+            total_signals += res['total_signals']
+            total_success += res['successful']
+            total_pnl += res['total_pnl']
+
+        if total_signals > 0:
+            overall_win = total_success / total_signals * 100
+            lines.append("**Overall**")
+            lines.append(f"- Total Signals: {total_signals}")
+            lines.append(f"- Overall Win Rate: {overall_win:.2f}%")
+            lines.append(f"- Total PnL (sum): {total_pnl:.2f}%")
+
+        return "\n".join(lines)
+
+    def send_report(self):
+        """إرسال التقرير إلى ntfy"""
+        report = self.generate_report()
+        title = "Backtest Results"
+        self.detector.notification_manager.send_ntfy(report, title, priority="4", tags="bar_chart")
+
+# ======================
+# إضافة route جديد لتشغيل الباكتيست
+# ======================
+@app.route('/api/run_backtest', methods=['POST'])
+def run_backtest():
+    """تشغيل الباكتيست بشكل غير متزامن وإرسال النتائج إلى ntfy"""
+    if hasattr(app, 'backtester_running') and app.backtester_running:
+        return jsonify({"status": "error", "message": "Backtest already running"}), 409
+
+    def backtest_thread():
+        app.backtester_running = True
+        try:
+            backtester = Backtester(detector)
+            results = backtester.run_all()
+            backtester.send_report()
+            logger.info("Backtest completed and report sent.")
+        except Exception as e:
+            logger.error(f"Backtest failed: {e}")
+        finally:
+            app.backtester_running = False
+
+    app.backtester_running = False
+    thread = threading.Thread(target=backtest_thread, daemon=True)
+    thread.start()
+    return jsonify({"status": "success", "message": "Backtest started. Results will be sent to ntfy."})
+
+# يمكن أيضاً إضافة route لاستعراض النتائج المخزنة
+@app.route('/api/backtest_results')
+def get_backtest_results():
+    backtester = Backtester(detector)
+    return jsonify(backtester.results)
+
+# ======================
+# ملاحظة: يجب إضافة import itertools في أعلى الملف (إذا لم يكن موجوداً)
+# ======================

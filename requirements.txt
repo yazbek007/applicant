@@ -1,5 +1,19 @@
-requests==2.31.0
-pandas==2.0.3
-numpy==1.24.3
-ta==0.10.2
+# 📦 متطلبات المشروع المحدثة
+Flask==3.0.3
+pandas==2.2.3
+numpy>=1.26.0,<2
+ccxt==4.2.58
+requests==2.32.3
+python-dotenv>=1.0.0,<2.0.0
+gunicorn==21.2.0
+setuptools==69.0.3
+wheel==0.42.0
 python-dateutil==2.8.2
+six==1.16.0
+python-binance==1.0.19
+pytz==2024.1
+apscheduler==3.10.4
+
+
+
+

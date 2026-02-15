@@ -1,6 +1,6 @@
 """
-Crypto Tops & Bottoms Detector Bot - النسخة المتقدمة والمحسنة (v3.0)
-إصدار 3.0 - تحسين شامل: تحديث العملات ديناميكيًا، مؤشرات محسنة، دقة أعلى
+Crypto Tops & Bottoms Detector Bot - النسخة المتقدمة والمحسنة (v3.1)
+إصدار 3.1 - تحسين الاتصال ومعالجة الأخطاء، تحديث CCXT، وإدارة الطلبات
 """
 
 import os
@@ -22,6 +22,12 @@ from flask import Flask, render_template, jsonify, request
 import ccxt
 import backoff
 from ratelimit import limits, RateLimitException
+
+# فحص إصدار CCXT
+logger = logging.getLogger(__name__)
+logger.info(f"CCXT version: {ccxt.__version__}")
+if ccxt.__version__ < '4.4.0':
+    logger.warning("⚠️ CCXT version is old. Recommended to upgrade to 4.4.0+")
 
 # ======================
 # إعدادات التسجيل
@@ -119,6 +125,7 @@ class AppConfig:
     TIMEFRAME = '15m'
     HIGHER_TIMEFRAME = '1h'
     MAX_CANDLES = 300
+    MIN_CANDLES_REQUIRED = 30  # تم التخفيض من 50 إلى 30
 
     # إعدادات Pivot
     PIVOT_LEFT = 5
@@ -172,7 +179,7 @@ class ExternalAPIConfig:
     MAX_RETRIES = 2
 
 # ======================
-# Binance Client مع إعادة محاولة ذكية
+# Binance Client محدث مع تحسينات
 # ======================
 class BinanceClient:
     def __init__(self):
@@ -180,21 +187,59 @@ class BinanceClient:
             'apiKey': ExternalAPIConfig.BINANCE_API_KEY,
             'secret': ExternalAPIConfig.BINANCE_SECRET_KEY,
             'enableRateLimit': True,
-            'options': {'defaultType': 'spot'}
+            'rateLimit': 50,  # تم التعديل للإصدار الجديد
+            'timeout': 30000,
+            'options': {
+                'defaultType': 'spot',
+                'adjustForTimeDifference': True,
+                'recvWindow': 10000,
+                'maxRetriesOnFailure': 3,  # ميزة جديدة
+            }
         })
         self.session = requests.Session()
+        self.last_request_time = {}
+        self.min_request_interval = 1.5  # ثانية بين الطلبات لنفس العملة
+
+    def _wait_for_rate_limit(self, symbol):
+        """تأخير بين الطلبات لنفس العملة"""
+        now = time.time()
+        if symbol in self.last_request_time:
+            elapsed = now - self.last_request_time[symbol]
+            if elapsed < self.min_request_interval:
+                time.sleep(self.min_request_interval - elapsed)
+        self.last_request_time[symbol] = time.time()
 
     @backoff.on_exception(
         backoff.expo,
-        (ccxt.RateLimitExceeded, ccxt.NetworkError, requests.exceptions.RequestException),
-        max_tries=3,
-        max_time=30
+        (ccxt.RateLimitExceeded, ccxt.NetworkError, ccxt.ExchangeError, requests.exceptions.RequestException),
+        max_tries=5,
+        max_time=60,
+        giveup=lambda e: isinstance(e, ccxt.BadSymbol)
     )
     def fetch_ohlcv(self, symbol: str, timeframe: str = AppConfig.TIMEFRAME, limit: int = AppConfig.MAX_CANDLES) -> Optional[List]:
+        """جلب بيانات OHLCV مع تأخير وإعادة محاولة"""
         try:
-            return self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            self._wait_for_rate_limit(symbol)
+            # استخدام fetch_ohlcv مع معالجة أفضل للأخطاء
+            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            if ohlcv and len(ohlcv) > 0:
+                return ohlcv
+            else:
+                logger.warning(f"No data returned for {symbol}")
+                return None
+        except ccxt.RateLimitExceeded as e:
+            logger.warning(f"Rate limit exceeded for {symbol}, waiting longer...")
+            time.sleep(5)
+            return None
+        except ccxt.NetworkError as e:
+            logger.error(f"Network error for {symbol}: {e}")
+            time.sleep(3)
+            return None
+        except ccxt.ExchangeError as e:
+            logger.error(f"Exchange error for {symbol}: {e}")
+            return None
         except Exception as e:
-            logger.error(f"Binance OHLCV error {symbol} {timeframe}: {e}")
+            logger.error(f"Unexpected error for {symbol}: {e}")
             return None
 
     @backoff.on_exception(
@@ -204,11 +249,35 @@ class BinanceClient:
         max_time=30
     )
     def fetch_ticker(self, symbol: str) -> Optional[Dict]:
+        """جلب التicker مع تأخير"""
         try:
+            self._wait_for_rate_limit(symbol)
             return self.exchange.fetch_ticker(symbol)
         except Exception as e:
-            logger.error(f"Binance ticker error {symbol}: {e}")
+            logger.error(f"Error fetching ticker for {symbol}: {e}")
             return None
+
+    def fetch_ohlcv_with_fallback(self, symbol: str, timeframe: str = AppConfig.TIMEFRAME, limit: int = AppConfig.MAX_CANDLES) -> Optional[List]:
+        """محاولة جلب البيانات من مصادر متعددة إذا فشل المصدر الرئيسي"""
+        data = self.fetch_ohlcv(symbol, timeframe, limit)
+        if data:
+            return data
+        # المحاولة الثانية: تقليل الـ limit
+        logger.info(f"Retrying {symbol} with smaller limit...")
+        data = self.fetch_ohlcv(symbol, timeframe, min(limit, 100))
+        if data:
+            return data
+        return None
+
+    def fetch_multiple_tickers(self, symbols: List[str]) -> Dict:
+        """محاولة جلب عدة tickers مرة واحدة (إن أمكن)"""
+        try:
+            # في الإصدارات الحديثة، fetchTickers يمكن أن تأخذ قائمة رموز
+            tickers = self.exchange.fetch_tickers(symbols)
+            return tickers
+        except Exception as e:
+            logger.error(f"Error fetching multiple tickers: {e}")
+            return {}
 
 # ======================
 # المؤشرات الفنية المحسوبة يدوياً - نسخة محسنة (معالج الأخطاء)
@@ -682,29 +751,58 @@ class TopBottomDetector:
         with self.lock:
             self.update_coins_list()
             logger.info(f"🔄 Scanning {len(AppConfig.COINS)} coins for tops/bottoms (advanced mode)...")
+
             success_count = 0
+            failed_coins = []
+
+            # محاولة جلب جميع الـ tickers دفعة واحدة لتحسين الأداء
+            symbols = [coin.symbol for coin in AppConfig.COINS if coin.enabled]
+            all_tickers = self.binance.fetch_multiple_tickers(symbols)
 
             for coin in AppConfig.COINS:
                 if not coin.enabled:
                     continue
                 try:
-                    signal = self._scan_coin_advanced(coin)
+                    # تمرير الـ ticker إذا كان موجوداً في النتائج
+                    ticker = all_tickers.get(coin.symbol)
+                    signal = self._scan_coin_advanced(coin, ticker)
                     if signal:
                         self.detections.append(signal)
                         self.notification_manager.create_notification(signal)
                         success_count += 1
+                    else:
+                        failed_coins.append(coin)
                 except Exception as e:
                     logger.error(f"Error on {coin.symbol}: {e}", exc_info=True)
+                    failed_coins.append(coin)
+
+            # إعادة محاولة العملات الفاشلة (مرة واحدة)
+            if failed_coins:
+                logger.info(f"🔄 Retrying {len(failed_coins)} failed coins...")
+                time.sleep(5)
+                for coin in failed_coins:
+                    try:
+                        signal = self._scan_coin_advanced(coin)
+                        if signal:
+                            self.detections.append(signal)
+                            self.notification_manager.create_notification(signal)
+                            success_count += 1
+                    except Exception as e:
+                        logger.error(f"Retry error on {coin.symbol}: {e}")
 
             self.last_update = datetime.now()
             if len(self.detections) > 100:
                 self.detections = self.detections[-100:]
+
             logger.info(f"✅ Found {success_count} potential tops/bottoms")
             return success_count > 0
 
-    def _scan_coin_advanced(self, coin: CoinConfig) -> Optional[TopBottomSignal]:
-        ohlcv = self.binance.fetch_ohlcv(coin.symbol, AppConfig.TIMEFRAME, AppConfig.MAX_CANDLES)
-        if not ohlcv or len(ohlcv) < 50:
+    def _scan_coin_advanced(self, coin: CoinConfig, pre_fetched_ticker: Optional[Dict] = None) -> Optional[TopBottomSignal]:
+        """مسح عملة واحدة مع إمكانية استخدام ticker مُسبق"""
+        # استخدام fetch_ohlcv_with_fallback للحصول على البيانات
+        ohlcv = self.binance.fetch_ohlcv_with_fallback(coin.symbol, AppConfig.TIMEFRAME, AppConfig.MAX_CANDLES)
+        if not ohlcv or len(ohlcv) < AppConfig.MIN_CANDLES_REQUIRED:
+            logger.debug(f"Insufficient data for {coin.symbol}: {len(ohlcv) if ohlcv else 0} candles")
             return None
 
         ohlcv_htf = self.binance.fetch_ohlcv(coin.symbol, AppConfig.HIGHER_TIMEFRAME, 100)
@@ -715,10 +813,19 @@ class TopBottomDetector:
         closes = [c[4] for c in ohlcv]
         volumes = [c[5] for c in ohlcv]
 
-        ticker = self.binance.fetch_ticker(coin.symbol)
+        # استخدام ticker المقدم إن وجد، وإلا جلبه
+        if pre_fetched_ticker:
+            ticker = pre_fetched_ticker
+        else:
+            ticker = self.binance.fetch_ticker(coin.symbol)
+
         if not ticker:
+            logger.warning(f"No ticker for {coin.symbol}")
             return None
+
         current_price = ticker['last']
+        if current_price is None:
+            return None
 
         # حساب المؤشرات
         rsi = TechnicalIndicators.rsi(closes, 14)
@@ -1062,7 +1169,7 @@ threading.Thread(target=delayed_startup, daemon=True).start()
 
 if __name__ == '__main__':
     logger.info("=" * 50)
-    logger.info("🚀 Crypto Tops & Bottoms Detector Advanced v3.0 (Enhanced)")
+    logger.info("🚀 Crypto Tops & Bottoms Detector Advanced v3.1 (Enhanced Connection)")
     logger.info(f"📊 Coins: {len(AppConfig.COINS)}")
     logger.info(f"🔄 Update every {AppConfig.UPDATE_INTERVAL//60} minutes")
     logger.info(f"📢 NTFY: {ExternalAPIConfig.NTFY_URL}")

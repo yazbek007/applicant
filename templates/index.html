@@ -3,69 +3,188 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto Tops & Bottoms Detector</title>
+    <title>Crypto Tops & Bottoms · Advanced Dashboard</title>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- Chart.js for graphs -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
         }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #0b0e14;
-            color: #e0e5ec;
-            padding: 20px;
+            background: #0b0e14;
+            color: #e2e8f0;
+            padding: 24px 32px;
+            min-height: 100vh;
         }
-        .container {
-            max-width: 1400px;
+
+        .dashboard {
+            max-width: 1600px;
             margin: 0 auto;
         }
-        h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-            color: #bb86fc;
-            border-bottom: 2px solid #2a2f3a;
-            padding-bottom: 10px;
-        }
-        .stats {
+
+        /* header */
+        .header {
             display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
             flex-wrap: wrap;
             gap: 20px;
-            margin: 20px 0;
-            background: #1e222a;
-            border-radius: 12px;
-            padding: 20px;
-            border: 1px solid #2a2f3a;
         }
-        .stat-item {
-            flex: 1 1 150px;
-            background: #2a2f3a;
-            border-radius: 10px;
-            padding: 15px;
-            text-align: center;
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+            background: linear-gradient(135deg, #a78bfa, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        .stat-label {
-            font-size: 0.9rem;
-            color: #8d96b0;
+        .badge {
+            background: #1e293b;
+            padding: 6px 14px;
+            border-radius: 40px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #94a3b8;
+            border: 1px solid #334155;
+        }
+        .badge i {
+            margin-right: 6px;
+            color: #4ade80;
+        }
+        .actions {
+            display: flex;
+            gap: 12px;
+        }
+        .btn {
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: #e2e8f0;
+            padding: 10px 20px;
+            border-radius: 40px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn:hover {
+            background: #2d3a4f;
+            border-color: #4b5565;
+        }
+        .btn-primary {
+            background: #7c3aed;
+            border-color: #8b5cf6;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #8b5cf6;
+        }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid #334155;
+        }
+
+        /* stats cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 32px;
+        }
+        .stat-card {
+            background: #131a26;
+            border-radius: 24px;
+            padding: 22px 20px;
+            border: 1px solid #253040;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+        }
+        .stat-title {
+            font-size: 14px;
+            color: #94a3b8;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
         .stat-value {
-            font-size: 1.8rem;
-            font-weight: bold;
-            margin-top: 5px;
+            font-size: 36px;
+            font-weight: 700;
+            color: white;
+            line-height: 1.2;
         }
-        .status-healthy {
-            color: #4caf50;
+        .stat-desc {
+            font-size: 13px;
+            color: #64748b;
+            margin-top: 8px;
         }
-        .status-warning {
-            color: #ff9800;
+        .stat-icon {
+            font-size: 2.5rem;
+            opacity: 0.2;
+            position: relative;
+            top: -10px;
         }
-        .table-container {
-            background: #1e222a;
-            border-radius: 12px;
-            padding: 20px;
-            border: 1px solid #2a2f3a;
+
+        /* main grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+        @media (max-width: 1000px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: #131a26;
+            border-radius: 28px;
+            border: 1px solid #253040;
+            overflow: hidden;
+        }
+        .card-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #253040;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .card-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #f1f5f9;
+        }
+        .card-header h2 i {
+            margin-right: 10px;
+            color: #a78bfa;
+        }
+        .badge-light {
+            background: #2d3a4f;
+            padding: 4px 12px;
+            border-radius: 40px;
+            font-size: 13px;
+            color: #cbd5e1;
+        }
+        .card-body {
+            padding: 0;
+        }
+
+        /* table */
+        .table-responsive {
             overflow-x: auto;
         }
         table {
@@ -74,170 +193,470 @@
         }
         th {
             text-align: left;
-            padding: 12px 8px;
-            background: #2a2f3a;
-            color: #bb86fc;
-            font-weight: 600;
-            font-size: 0.9rem;
+            padding: 16px 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #94a3b8;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: #0f1622;
+            border-bottom: 1px solid #253040;
         }
         td {
-            padding: 12px 8px;
-            border-bottom: 1px solid #2a2f3a;
-            font-size: 0.95rem;
+            padding: 16px 20px;
+            border-bottom: 1px solid #1e2a3a;
+            color: #e2e8f0;
+            font-size: 14px;
         }
-        tr:hover {
-            background: #252a34;
+        tr:last-child td {
+            border-bottom: none;
         }
-        .type-TOP {
-            color: #ff6b6b;
-            font-weight: bold;
+        .signal-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 40px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
         }
-        .type-BOTTOM {
-            color: #51cf66;
-            font-weight: bold;
+        .signal-top {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid #7f1d1d;
+        }
+        .signal-bottom {
+            background: rgba(34, 197, 94, 0.15);
+            color: #4ade80;
+            border: 1px solid #14532d;
         }
         .confidence-bar {
-            background: #2a2f3a;
-            height: 20px;
-            border-radius: 10px;
+            width: 80px;
+            height: 6px;
+            background: #253040;
+            border-radius: 6px;
             overflow: hidden;
-            width: 100px;
-            display: inline-block;
-            vertical-align: middle;
-            margin-right: 8px;
         }
         .confidence-fill {
             height: 100%;
-            background: linear-gradient(90deg, #bb86fc, #9d65d6);
-            border-radius: 10px;
+            background: linear-gradient(90deg, #8b5cf6, #ec4899);
+            border-radius: 6px;
         }
-        .indicator-badge {
-            background: #2a2f3a;
-            border-radius: 16px;
-            padding: 4px 10px;
-            font-size: 0.8rem;
-            display: inline-block;
-            margin: 2px;
-            border: 1px solid #3f4552;
+        .coin-name {
+            font-weight: 600;
+            color: white;
         }
+        .indicators-preview {
+            max-width: 250px;
+            font-size: 12px;
+            color: #94a3b8;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* notifications list */
+        .notification-list {
+            list-style: none;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .notification-item {
+            padding: 16px 24px;
+            border-bottom: 1px solid #1e2a3a;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .notification-item:last-child {
+            border-bottom: none;
+        }
+        .notif-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            background: #1e293b;
+        }
+        .notif-content {
+            flex: 1;
+        }
+        .notif-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .notif-meta {
+            font-size: 12px;
+            color: #94a3b8;
+            display: flex;
+            gap: 16px;
+        }
+        .notif-price {
+            font-weight: 500;
+            color: #cbd5e1;
+        }
+
+        /* chart container */
+        .chart-container {
+            padding: 20px;
+            height: 250px;
+        }
+
+        /* footer */
         .footer {
-            margin-top: 30px;
+            margin-top: 40px;
             text-align: center;
-            color: #6f7a92;
-            font-size: 0.85rem;
+            color: #64748b;
+            font-size: 13px;
+            border-top: 1px solid #1e2a3a;
+            padding-top: 24px;
         }
-        .refresh-btn {
-            background: #bb86fc;
-            border: none;
-            color: #0b0e14;
-            padding: 10px 20px;
-            border-radius: 30px;
-            font-weight: bold;
-            cursor: pointer;
-            margin-bottom: 20px;
-            transition: background 0.3s;
+        .footer a {
+            color: #a78bfa;
+            text-decoration: none;
         }
-        .refresh-btn:hover {
-            background: #9d65d6;
+
+        /* loading */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.1);
+            border-radius: 50%;
+            border-top-color: #8b5cf6;
+            animation: spin 1s ease-in-out infinite;
         }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .text-center { text-align: center; padding: 40px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🚀 Crypto Tops & Bottoms Detector</h1>
-        <button class="refresh-btn" onclick="location.reload()">⟳ Refresh Data</button>
-
-        <!-- الإحصائيات -->
-        <div class="stats">
-            <div class="stat-item">
-                <div class="stat-label">Last Update</div>
-                <div class="stat-value" style="font-size: 1.2rem;">{{ stats.last_update or 'Never' }}</div>
+    <div class="dashboard">
+        <!-- header -->
+        <div class="header">
+            <h1>
+                <i class="fas fa-chart-line"></i> Crypto Tops & Bottoms
+                <span class="badge"><i class="fas fa-circle"></i> Advanced v2.0</span>
+            </h1>
+            <div class="actions">
+                <button class="btn btn-outline" id="refreshBtn"><i class="fas fa-sync-alt"></i> Refresh data</button>
+                <button class="btn btn-primary" id="manualScanBtn"><i class="fas fa-search"></i> Manual scan now</button>
             </div>
-            <div class="stat-item">
-                <div class="stat-label">Status</div>
-                <div class="stat-value {{ 'status-healthy' if stats.status == 'healthy' else 'status-warning' }}">
-                    {{ stats.status|upper }}
+        </div>
+
+        <!-- stats cards (filled by js) -->
+        <div class="stats-grid" id="statsContainer">
+            <!-- will be populated -->
+        </div>
+
+        <!-- main content grid -->
+        <div class="main-grid">
+            <!-- left: recent detections table -->
+            <div class="card">
+                <div class="card-header">
+                    <h2><i class="fas fa-flag"></i> Recent detections</h2>
+                    <div class="badge-light" id="detectionsCount">0</div>
+                </div>
+                <div class="card-body table-responsive">
+                    <table id="detectionsTable">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Coin</th>
+                                <th>Type</th>
+                                <th>Confidence</th>
+                                <th>Price</th>
+                                <th>Indicators</th>
+                            </tr>
+                        </thead>
+                        <tbody id="detectionsBody">
+                            <tr><td colspan="6" class="text-center"><div class="loading"></div> Loading...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
-            <div class="stat-item">
-                <div class="stat-label">Coins Tracked</div>
-                <div class="stat-value">{{ stats.coins_tracked }}</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-label">Total Detections</div>
-                <div class="stat-value">{{ stats.total_detections }}</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-label">Tops / Bottoms</div>
-                <div class="stat-value">{{ stats.tops }} / {{ stats.bottoms }}</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-label">Notifications</div>
-                <div class="stat-value">{{ stats.notifications_sent }}</div>
+
+            <!-- right: notifications & chart -->
+            <div style="display: flex; flex-direction: column; gap: 24px;">
+                <!-- mini chart -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-chart-pie"></i> Signals by coin</h2>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="signalsChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- recent notifications -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-bell"></i> Recent notifications</h2>
+                        <span class="badge-light" id="notificationsCount">0</span>
+                    </div>
+                    <div class="card-body">
+                        <ul class="notification-list" id="notificationList">
+                            <li class="text-center" style="padding: 40px;">Loading...</li>
+                        </ul>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- جدول الاكتشافات -->
-        <div class="table-container">
-            <h2 style="margin-bottom: 15px;">📡 Recent Detections</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Time</th>
-                        <th>Coin</th>
-                        <th>Type</th>
-                        <th>Confidence</th>
-                        <th>Price (USDT)</th>
-                        <th>Indicators</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for d in detections %}
-                    <tr>
-                        <td>{{ d.timestamp }}</td>
-                        <td><strong>{{ d.coin_name }}</strong><br><small>{{ d.coin_symbol }}</small></td>
-                        <td class="type-{{ d.signal_type }}">{{ d.signal_type }}</td>
-                        <td>
-                            <div style="display: flex; align-items: center;">
-                                <span class="confidence-bar">
-                                    <div class="confidence-fill" style="width: {{ d.confidence }}%;"></div>
-                                </span>
-                                {{ d.confidence|round(1) }}%
-                            </div>
-                        </td>
-                        <td>${{ d.price|round(2) }}</td>
-                        <td>
-                            {% for key, value in d.indicators.items() %}
-                                {% if key == 'patterns' %}
-                                    {% for pat, exists in value.items() %}
-                                        {% if exists %}
-                                            <span class="indicator-badge">{{ pat.replace('_', ' ') }}</span>
-                                        {% endif %}
-                                    {% endfor %}
-                                {% elif key == 'support_resistance_score' %}
-                                    <span class="indicator-badge">SR: {{ value|round(2) }}</span>
-                                {% elif key == 'rsi' %}
-                                    <span class="indicator-badge">RSI: {{ value|round(1) }}</span>
-                                {% elif key == 'vs_sma20' %}
-                                    <span class="indicator-badge">vs SMA20: {{ (value * 100)|round(1) }}%</span>
-                                {% elif key == 'volume_spike' and value %}
-                                    <span class="indicator-badge">Volume Spike</span>
-                                {% endif %}
-                            {% endfor %}
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="6" style="text-align: center; padding: 40px;">No detections yet. Waiting for scan...</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+        <!-- footer -->
         <div class="footer">
-            Crypto Tops & Bottoms Detector v1.0 | Data updates every 2 minutes
+            <i class="fas fa-robot"></i> Automated detection every 2 minutes · 
+            <a href="#" id="healthLink">System health check</a> · 
+            <span id="lastUpdate">updating...</span>
         </div>
     </div>
+
+    <script>
+        // Global state
+        let detections = [];
+        let notifications = [];
+        let health = {};
+
+        // DOM elements
+        const statsContainer = document.getElementById('statsContainer');
+        const detectionsBody = document.getElementById('detectionsBody');
+        const notificationList = document.getElementById('notificationList');
+        const detectionsCountSpan = document.getElementById('detectionsCount');
+        const notificationsCountSpan = document.getElementById('notificationsCount');
+        const lastUpdateSpan = document.getElementById('lastUpdate');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const manualScanBtn = document.getElementById('manualScanBtn');
+        const healthLink = document.getElementById('healthLink');
+
+        // Chart instance
+        let signalsChart;
+
+        // Format date
+        function formatTime(timestamp) {
+            if (!timestamp) return '-';
+            const d = new Date(timestamp);
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        // Format date full
+        function formatDateTime(timestamp) {
+            if (!timestamp) return '-';
+            const d = new Date(timestamp);
+            return d.toLocaleString();
+        }
+
+        // Fetch all data
+        async function fetchAll() {
+            try {
+                const [detRes, notifRes, healthRes] = await Promise.all([
+                    fetch('/api/detections?limit=30'),
+                    fetch('/api/notifications?limit=15'),
+                    fetch('/api/health')
+                ]);
+                const detData = await detRes.json();
+                const notifData = await notifRes.json();
+                const healthData = await healthRes.json();
+
+                if (detData.status === 'success') detections = detData.data || [];
+                else detections = [];
+
+                notifications = notifData.notifications || [];
+                health = healthData;
+
+                renderStats();
+                renderDetections();
+                renderNotifications();
+                updateChart();
+                updateFooter();
+            } catch (err) {
+                console.error('Failed to fetch data', err);
+                detectionsBody.innerHTML = `<tr><td colspan="6" class="text-center" style="color: #f87171;">Error loading data</td></tr>`;
+            }
+        }
+
+        // Render stats cards
+        function renderStats() {
+            const tops = detections.filter(d => d.signal_type === 'TOP').length;
+            const bottoms = detections.filter(d => d.signal_type === 'BOTTOM').length;
+            const notifCount = notifications.length;
+            const lastUpdate = health.last_update ? formatTime(health.last_update) : 'Never';
+
+            statsContainer.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-title"><i class="fas fa-database"></i> Total detections</div>
+                    <div class="stat-value">${detections.length}</div>
+                    <div class="stat-desc">Since last restart</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title"><i class="fas fa-arrow-up" style="color:#f87171;"></i> Tops</div>
+                    <div class="stat-value" style="color:#f87171;">${tops}</div>
+                    <div class="stat-desc">${tops > 0 ? ((tops/detections.length*100).toFixed(1)+'%') : '0%'}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title"><i class="fas fa-arrow-down" style="color:#4ade80;"></i> Bottoms</div>
+                    <div class="stat-value" style="color:#4ade80;">${bottoms}</div>
+                    <div class="stat-desc">${bottoms > 0 ? ((bottoms/detections.length*100).toFixed(1)+'%') : '0%'}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title"><i class="fas fa-bell"></i> Notifications sent</div>
+                    <div class="stat-value">${health.notifications_sent || 0}</div>
+                    <div class="stat-desc">Last: ${lastUpdate}</div>
+                </div>
+            `;
+            detectionsCountSpan.innerText = detections.length;
+            notificationsCountSpan.innerText = notifications.length;
+        }
+
+        // Render detections table
+        function renderDetections() {
+            if (!detections.length) {
+                detectionsBody.innerHTML = `<tr><td colspan="6" class="text-center">No detections yet</td></tr>`;
+                return;
+            }
+
+            let html = '';
+            detections.slice(0, 20).forEach(d => {
+                const time = formatDateTime(d.timestamp);
+                const typeClass = d.signal_type === 'TOP' ? 'signal-top' : 'signal-bottom';
+                const confidence = d.confidence || 0;
+                const indicators = d.indicators ? Object.keys(d.indicators).slice(0,3).join(', ') + '…' : '{}';
+                html += `<tr>
+                    <td>${time}</td>
+                    <td><span class="coin-name">${d.coin_name}</span> <span style="color:#64748b;">${d.coin_symbol}</span></td>
+                    <td><span class="signal-badge ${typeClass}">${d.signal_type}</span></td>
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span>${confidence.toFixed(0)}%</span>
+                            <div class="confidence-bar"><div class="confidence-fill" style="width: ${confidence}%;"></div></div>
+                        </div>
+                    </td>
+                    <td>$${d.price?.toFixed(2) || '0'}</td>
+                    <td><div class="indicators-preview" title="${JSON.stringify(d.indicators)}">${indicators}</div></td>
+                </tr>`;
+            });
+            detectionsBody.innerHTML = html;
+        }
+
+        // Render notifications
+        function renderNotifications() {
+            if (!notifications.length) {
+                notificationList.innerHTML = `<li class="text-center" style="padding: 40px;">No notifications yet</li>`;
+                return;
+            }
+            let html = '';
+            notifications.slice(0, 10).forEach(n => {
+                const icon = n.notification_type === 'TOP' ? 'fa-arrow-up' : 'fa-arrow-down';
+                const color = n.notification_type === 'TOP' ? '#f87171' : '#4ade80';
+                const time = formatTime(n.timestamp);
+                html += `
+                <li class="notification-item">
+                    <div class="notif-icon" style="color: ${color};"><i class="fas ${icon}"></i></div>
+                    <div class="notif-content">
+                        <div class="notif-title">${n.coin_name} ${n.notification_type}</div>
+                        <div class="notif-meta">
+                            <span>${time}</span>
+                            <span class="notif-price">$${n.price?.toFixed(2)}</span>
+                            <span>confidence ${n.signal_strength?.toFixed(0)}%</span>
+                        </div>
+                    </div>
+                </li>
+                `;
+            });
+            notificationList.innerHTML = html;
+        }
+
+        // Update chart (signals per coin)
+        function updateChart() {
+            const coinMap = new Map();
+            detections.forEach(d => {
+                const coin = d.coin_symbol.split('/')[0];
+                coinMap.set(coin, (coinMap.get(coin) || 0) + 1);
+            });
+
+            const labels = Array.from(coinMap.keys());
+            const data = Array.from(coinMap.values());
+
+            const ctx = document.getElementById('signalsChart').getContext('2d');
+            if (signalsChart) signalsChart.destroy();
+
+            signalsChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#8b5cf6', '#ec4899', '#3b82f6', '#10b981', '#f59e0b'],
+                        borderWidth: 0,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    cutout: '65%'
+                }
+            });
+        }
+
+        // Update footer with last update time
+        function updateFooter() {
+            if (health.last_update) {
+                const d = new Date(health.last_update);
+                lastUpdateSpan.innerText = `Last scan: ${d.toLocaleTimeString()}`;
+            } else {
+                lastUpdateSpan.innerText = 'Waiting for first scan...';
+            }
+        }
+
+        // Manual scan
+        async function manualScan() {
+            manualScanBtn.disabled = true;
+            manualScanBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Scanning...';
+            try {
+                const res = await fetch('/api/update', { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    await fetchAll();
+                } else {
+                    alert('Scan triggered but no new signals.');
+                }
+            } catch (err) {
+                alert('Error during manual scan');
+            } finally {
+                manualScanBtn.disabled = false;
+                manualScanBtn.innerHTML = '<i class="fas fa-search"></i> Manual scan now';
+            }
+        }
+
+        // Health check popup
+        function showHealth() {
+            alert(`System health:
+Status: ${health.status}
+Uptime: ${Math.floor(health.uptime / 60)} min
+Coins tracked: ${health.coins_tracked}
+Total detections: ${health.total_detections}
+Notifications sent: ${health.notifications_sent}`);
+        }
+
+        // Auto refresh every 30 seconds
+        let interval = setInterval(fetchAll, 30000);
+
+        // Event listeners
+        refreshBtn.addEventListener('click', () => {
+            fetchAll();
+        });
+        manualScanBtn.addEventListener('click', manualScan);
+        healthLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            showHealth();
+        });
+
+        // Initial load
+        fetchAll();
+    </script>
 </body>
 </html>

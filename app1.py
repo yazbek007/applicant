@@ -956,66 +956,8 @@ def delayed_startup():
 
 threading.Thread(target=delayed_startup, daemon=True).start()
 
-# ======================
-# قالب HTML بسيط (محدث)
-# ======================
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Crypto Tops & Bottoms Detector Advanced</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: Arial; margin: 20px; background: #111; color: #eee; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #333; padding: 8px; text-align: left; }
-        th { background: #222; }
-        .TOP { color: #ff6b6b; }
-        .BOTTOM { color: #51cf66; }
-        pre { margin: 0; white-space: pre-wrap; }
-        .stats { display: flex; gap: 20px; margin-bottom: 20px; }
-        .stat-card { background: #222; padding: 15px; border-radius: 5px; flex: 1; }
-    </style>
-</head>
-<body>
-    <h1>Crypto Tops & Bottoms Detector (Advanced)</h1>
-    <div class="stats">
-        <div class="stat-card">Status: {{ stats.status }}</div>
-        <div class="stat-card">Last Update: {{ stats.last_update or 'Never' }}</div>
-        <div class="stat-card">Total Detections: {{ stats.total_detections }} (Tops: {{ stats.tops }}, Bottoms: {{ stats.bottoms }})</div>
-        <div class="stat-card">Notifications: {{ stats.notifications_sent }}</div>
-    </div>
 
-    <h2>Recent Detections</h2>
-    <table>
-        <tr>
-            <th>Time</th>
-            <th>Coin</th>
-            <th>Type</th>
-            <th>Confidence</th>
-            <th>Price</th>
-            <th>Indicators</th>
-        </tr>
-        {% for d in detections %}
-        <tr>
-            <td>{{ d.timestamp }}</td>
-            <td>{{ d.coin_name }} ({{ d.coin_symbol }})</td>
-            <td class="{{ d.signal_type }}">{{ d.signal_type }}</td>
-            <td>{{ d.confidence|round(1) }}%</td>
-            <td>${{ d.price|round(2) }}</td>
-            <td><pre>{{ d.indicators }}</pre></td>
-        </tr>
-        {% endfor %}
-    </table>
-</body>
-</html>
-"""
 
-# حفظ القالب
-os.makedirs('templates', exist_ok=True)
-with open('templates/index.html', 'w', encoding='utf-8') as f:
-    f.write(HTML_TEMPLATE)
 
 # ======================
 # التشغيل الرئيسي

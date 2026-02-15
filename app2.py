@@ -80,7 +80,7 @@ class Notification:
 # ======================
 class AppConfig:
     @staticmethod
-    def get_top_coins(limit=15):
+    def get_top_coins(limit=10):
         """جلب أفضل العملات من حيث حجم التداول من Binance"""
         try:
             exchange = ccxt.binance()

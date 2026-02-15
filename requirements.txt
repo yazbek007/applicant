@@ -2,7 +2,7 @@
 Flask==3.0.3
 pandas==2.2.3
 numpy>=1.26.0,<2
-ccxt==4.2.58
+ccxt==4.4.53
 requests==2.32.3
 python-dotenv>=1.0.0,<2.0.0
 gunicorn==21.2.0

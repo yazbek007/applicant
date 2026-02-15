@@ -13,6 +13,8 @@ six==1.16.0
 python-binance==1.0.19
 pytz==2024.1
 apscheduler==3.10.4
+backoff>=2.2.1
+ratelimit>=2.2.1
 
 
 

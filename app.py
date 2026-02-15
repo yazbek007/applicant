@@ -79,9 +79,9 @@ class AppConfig:
     # إعدادات اكتشاف القمم والقيعان
     SWING_LEFT = 5
     SWING_RIGHT = 5
-    TOP_CONFIDENCE_THRESHOLD = 70
-    BOTTOM_CONFIDENCE_THRESHOLD = 70
-    COOLDOWN_SECONDS = 3600  # ساعة واحدة بين الإشعارات لنفس العملة ونفس النوع
+    TOP_CONFIDENCE_THRESHOLD = 60
+    BOTTOM_CONFIDENCE_THRESHOLD = 60
+    COOLDOWN_SECONDS = 300  # ساعة واحدة بين الإشعارات لنفس العملة ونفس النوع
 
     UPDATE_INTERVAL = 120  # 2 دقيقة
     MAX_CANDLES = 200

@@ -92,8 +92,8 @@ class AppConfig:
     FRACTAL_PERIOD = 2                 # 2 شمعة على كل جانب => 5 شموع
 
     # عتبات الثقة
-    TOP_CONFIDENCE_THRESHOLD = 40
-    BOTTOM_CONFIDENCE_THRESHOLD = 40
+    TOP_CONFIDENCE_THRESHOLD = 45
+    BOTTOM_CONFIDENCE_THRESHOLD = 45
 
     UPDATE_INTERVAL = 120
 

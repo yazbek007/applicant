@@ -1069,7 +1069,7 @@ class Backtester:
 
         # محاكاة الوقت الحقيقي: نمر على كل شمعة (نبدأ بعدد كافٍ من الشموع لحساب المؤشرات)
         min_bars_needed = 60  # عدد كافٍ لمعظم المؤشرات
-        for i in range(min_bneeded, total_candles):
+        for i in range(min_bars_needed, total_candles):
             # استخراج البيانات حتى الشمعة i (الشمعة الحالية)
             current_highs = highs[:i+1]
             current_lows = lows[:i+1]

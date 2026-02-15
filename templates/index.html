@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Tops & Bottoms Detector</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0b0e14;
+            color: #e0e5ec;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            color: #bb86fc;
+            border-bottom: 2px solid #2a2f3a;
+            padding-bottom: 10px;
+        }
+        .stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin: 20px 0;
+            background: #1e222a;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #2a2f3a;
+        }
+        .stat-item {
+            flex: 1 1 150px;
+            background: #2a2f3a;
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+        }
+        .stat-label {
+            font-size: 0.9rem;
+            color: #8d96b0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .stat-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        .status-healthy {
+            color: #4caf50;
+        }
+        .status-warning {
+            color: #ff9800;
+        }
+        .table-container {
+            background: #1e222a;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #2a2f3a;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            text-align: left;
+            padding: 12px 8px;
+            background: #2a2f3a;
+            color: #bb86fc;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+        }
+        td {
+            padding: 12px 8px;
+            border-bottom: 1px solid #2a2f3a;
+            font-size: 0.95rem;
+        }
+        tr:hover {
+            background: #252a34;
+        }
+        .type-TOP {
+            color: #ff6b6b;
+            font-weight: bold;
+        }
+        .type-BOTTOM {
+            color: #51cf66;
+            font-weight: bold;
+        }
+        .confidence-bar {
+            background: #2a2f3a;
+            height: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            width: 100px;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #bb86fc, #9d65d6);
+            border-radius: 10px;
+        }
+        .indicator-badge {
+            background: #2a2f3a;
+            border-radius: 16px;
+            padding: 4px 10px;
+            font-size: 0.8rem;
+            display: inline-block;
+            margin: 2px;
+            border: 1px solid #3f4552;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            color: #6f7a92;
+            font-size: 0.85rem;
+        }
+        .refresh-btn {
+            background: #bb86fc;
+            border: none;
+            color: #0b0e14;
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 20px;
+            transition: background 0.3s;
+        }
+        .refresh-btn:hover {
+            background: #9d65d6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Crypto Tops & Bottoms Detector</h1>
+        <button class="refresh-btn" onclick="location.reload()">⟳ Refresh Data</button>
+
+        <!-- الإحصائيات -->
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-label">Last Update</div>
+                <div class="stat-value" style="font-size: 1.2rem;">{{ stats.last_update or 'Never' }}</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Status</div>
+                <div class="stat-value {{ 'status-healthy' if stats.status == 'healthy' else 'status-warning' }}">
+                    {{ stats.status|upper }}
+                </div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Coins Tracked</div>
+                <div class="stat-value">{{ stats.coins_tracked }}</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Total Detections</div>
+                <div class="stat-value">{{ stats.total_detections }}</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Tops / Bottoms</div>
+                <div class="stat-value">{{ stats.tops }} / {{ stats.bottoms }}</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Notifications</div>
+                <div class="stat-value">{{ stats.notifications_sent }}</div>
+            </div>
+        </div>
+
+        <!-- جدول الاكتشافات -->
+        <div class="table-container">
+            <h2 style="margin-bottom: 15px;">📡 Recent Detections</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Coin</th>
+                        <th>Type</th>
+                        <th>Confidence</th>
+                        <th>Price (USDT)</th>
+                        <th>Indicators</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in detections %}
+                    <tr>
+                        <td>{{ d.timestamp }}</td>
+                        <td><strong>{{ d.coin_name }}</strong><br><small>{{ d.coin_symbol }}</small></td>
+                        <td class="type-{{ d.signal_type }}">{{ d.signal_type }}</td>
+                        <td>
+                            <div style="display: flex; align-items: center;">
+                                <span class="confidence-bar">
+                                    <div class="confidence-fill" style="width: {{ d.confidence }}%;"></div>
+                                </span>
+                                {{ d.confidence|round(1) }}%
+                            </div>
+                        </td>
+                        <td>${{ d.price|round(2) }}</td>
+                        <td>
+                            {% for key, value in d.indicators.items() %}
+                                {% if key == 'patterns' %}
+                                    {% for pat, exists in value.items() %}
+                                        {% if exists %}
+                                            <span class="indicator-badge">{{ pat.replace('_', ' ') }}</span>
+                                        {% endif %}
+                                    {% endfor %}
+                                {% elif key == 'support_resistance_score' %}
+                                    <span class="indicator-badge">SR: {{ value|round(2) }}</span>
+                                {% elif key == 'rsi' %}
+                                    <span class="indicator-badge">RSI: {{ value|round(1) }}</span>
+                                {% elif key == 'vs_sma20' %}
+                                    <span class="indicator-badge">vs SMA20: {{ (value * 100)|round(1) }}%</span>
+                                {% elif key == 'volume_spike' and value %}
+                                    <span class="indicator-badge">Volume Spike</span>
+                                {% endif %}
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 40px;">No detections yet. Waiting for scan...</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="footer">
+            Crypto Tops & Bottoms Detector v1.0 | Data updates every 2 minutes
+        </div>
+    </div>
+</body>
+</html>

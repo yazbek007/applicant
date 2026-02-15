@@ -1,6 +1,6 @@
 """
-Crypto Tops & Bottoms Detector Bot - النسخة المتقدمة (مصححة ومحسنة)
-إصدار 2.1 - إصلاح شامل للأخطاء وتحسين الدقة
+Crypto Tops & Bottoms Detector Bot - النسخة المتقدمة والمحسنة (v3.0)
+إصدار 3.0 - تحسين شامل: تحديث العملات ديناميكيًا، مؤشرات محسنة، دقة أعلى
 """
 
 import os
@@ -43,6 +43,8 @@ logger = logging.getLogger(__name__)
 class CoinConfig:
     symbol: str
     name: str
+    base_asset: str
+    quote_asset: str
     enabled: bool = True
 
 @dataclass
@@ -68,16 +70,51 @@ class Notification:
     price: float
 
 # ======================
-# إعدادات التطبيق
+# إعدادات التطبيق (محدثة)
 # ======================
 class AppConfig:
-    COINS = [
-        CoinConfig("BTC/USDT", "Bitcoin"),
-        CoinConfig("ETH/USDT", "Ethereum"),
-        CoinConfig("BNB/USDT", "Binance Coin"),
-        CoinConfig("SOL/USDT", "Solana"),
-        CoinConfig("XRP/USDT", "Ripple"),
-    ]
+    @staticmethod
+    def get_top_coins(limit=15):
+        """جلب أفضل العملات من حيث حجم التداول من Binance"""
+        try:
+            exchange = ccxt.binance()
+            tickers = exchange.fetch_tickers()
+            usdt_pairs = {k: v for k, v in tickers.items() 
+                         if k.endswith('/USDT') and v.get('quoteVolume')}
+            sorted_pairs = sorted(usdt_pairs.items(), 
+                                key=lambda x: x[1]['quoteVolume'] or 0, 
+                                reverse=True)
+            coins = []
+            EXCLUDED_COINS = ['LUNA', 'UST', 'FTT', 'TERRA', 'USD1', 'USDC']
+            for symbol, ticker in sorted_pairs[:limit]:
+                base = symbol.replace('/USDT', '')
+                if base not in EXCLUDED_COINS:
+                    coins.append(CoinConfig(symbol, base, base, 'USDT'))
+            if coins:
+                logger.info(f"✅ تم جلب {len(coins)} عملة من Binance")
+                return coins
+            else:
+                return AppConfig._get_default_coins()
+        except Exception as e:
+            logger.error(f"❌ خطأ في جلب العملات: {e}")
+            return AppConfig._get_default_coins()
+
+    @staticmethod
+    def _get_default_coins():
+        return [
+            CoinConfig("BTC/USDT", "Bitcoin", "BTC", "USDT"),
+            CoinConfig("ETH/USDT", "Ethereum", "ETH", "USDT"),
+            CoinConfig("BNB/USDT", "Binance Coin", "BNB", "USDT"),
+            CoinConfig("SOL/USDT", "Solana", "SOL", "USDT"),
+            CoinConfig("XRP/USDT", "Ripple", "XRP", "USDT"),
+            CoinConfig("ADA/USDT", "Cardano", "ADA", "USDT"),
+            CoinConfig("DOGE/USDT", "Dogecoin", "DOGE", "USDT"),
+            CoinConfig("AVAX/USDT", "Avalanche", "AVAX", "USDT"),
+            CoinConfig("DOT/USDT", "Polkadot", "DOT", "USDT"),
+            CoinConfig("MATIC/USDT", "Polygon", "MATIC", "USDT"),
+        ]
+
+    COINS = get_top_coins(15)
 
     TIMEFRAME = '15m'
     HIGHER_TIMEFRAME = '1h'
@@ -91,9 +128,9 @@ class AppConfig:
     # Fractal
     FRACTAL_PERIOD = 2                 # 2 شمعة على كل جانب => 5 شموع
 
-    # عتبات الثقة
-    TOP_CONFIDENCE_THRESHOLD = 45
-    BOTTOM_CONFIDENCE_THRESHOLD = 45
+    # عتبات الثقة (تم تخفيضها قليلاً لزيادة الحساسية)
+    TOP_CONFIDENCE_THRESHOLD = 40
+    BOTTOM_CONFIDENCE_THRESHOLD = 40
 
     UPDATE_INTERVAL = 120
 
@@ -102,7 +139,7 @@ class AppConfig:
     MIN_PRICE_MOVE_PERCENT = 0.8
     MIN_VOLATILITY_ATR_PERCENT = 0.5   # إذا كانت ATR% أقل من هذا، السوق هادئ
 
-    # أوزان المؤشرات (تختلف حسب نوع السوق)
+    # أوزان المؤشرات (محسنة)
     WEIGHTS = {
         'trend': {
             'pivot': 0.25,
@@ -119,6 +156,9 @@ class AppConfig:
             'msb': 0.15
         }
     }
+
+    # إضافة أنماط الشموع
+    ENABLE_CANDLE_PATTERNS = True
 
 # ======================
 # إعدادات APIs الخارجية
@@ -171,10 +211,10 @@ class BinanceClient:
             return None
 
 # ======================
-# المؤشرات الفنية المحسوبة يدوياً (بدون مكتبات إضافية) - مصححة
+# المؤشرات الفنية المحسوبة يدوياً - نسخة محسنة (معالج الأخطاء)
 # ======================
 class TechnicalIndicators:
-    """حساب المؤشرات باستخدام عمليات أساسية على قوائم - نسخة مصححة"""
+    """حساب المؤشرات مع معالجة الأخطاء والتحسينات"""
 
     @staticmethod
     def sma(values: List[float], period: int) -> List[Optional[float]]:
@@ -185,22 +225,30 @@ class TechnicalIndicators:
         return result
 
     @staticmethod
+    def ema(values: List[float], period: int) -> List[float]:
+        """Exponential Moving Average"""
+        if not values:
+            return []
+        k = 2 / (period + 1)
+        ema_values = [values[0]]
+        for i in range(1, len(values)):
+            ema_values.append(values[i] * k + ema_values[-1] * (1 - k))
+        return ema_values
+
+    @staticmethod
     def rsi(prices: List[float], period: int = 14) -> List[Optional[float]]:
-        """Relative Strength Index - مصحح"""
+        """Relative Strength Index - مصحح بالكامل"""
         if len(prices) < period + 1:
             return [None] * len(prices)
 
-        # حساب التغيرات
         deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-
-        # متوسط المكاسب والخسائر الأولي
         gains = [d if d > 0 else 0 for d in deltas]
         losses = [-d if d < 0 else 0 for d in deltas]
 
         avg_gain = sum(gains[:period]) / period
         avg_loss = sum(losses[:period]) / period
 
-        rsi_values = [None] * period  # أول period قيمة غير متاحة
+        rsi_values = [None] * period
 
         for i in range(period, len(prices)):
             if avg_loss == 0:
@@ -210,9 +258,8 @@ class TechnicalIndicators:
                 rsi = 100.0 - (100.0 / (1.0 + rs))
             rsi_values.append(rsi)
 
-            # تحديث المتوسطات للفترة التالية
             if i < len(prices) - 1:
-                gain = gains[i]  # لاحظ أن deltas[i] يقابل الشمعة i+1
+                gain = gains[i]
                 loss = losses[i]
                 avg_gain = (avg_gain * (period - 1) + gain) / period
                 avg_loss = (avg_loss * (period - 1) + loss) / period
@@ -221,21 +268,19 @@ class TechnicalIndicators:
 
     @staticmethod
     def atr(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> List[Optional[float]]:
-        """Average True Range - مصحح بالكامل"""
+        """Average True Range - مصحح"""
         length = len(closes)
         if length < period + 1:
             return [None] * length
 
-        # حساب True Range لكل شمعة (بدءاً من الشمعة 1)
         tr = [0.0] * length
-        tr[0] = highs[0] - lows[0]  # أول شمعة: فقط high-low
+        tr[0] = highs[0] - lows[0]
         for i in range(1, length):
             hl = highs[i] - lows[i]
             hc = abs(highs[i] - closes[i-1])
             lc = abs(lows[i] - closes[i-1])
             tr[i] = max(hl, hc, lc)
 
-        # حساب ATR باستخدام Wilder's smoothing
         atr_values = [None] * length
         atr_values[period - 1] = sum(tr[:period]) / period
 
@@ -246,7 +291,7 @@ class TechnicalIndicators:
 
     @staticmethod
     def adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> List[Optional[float]]:
-        """Average Directional Index - مصحح بالكامل"""
+        """Average Directional Index - مصحح"""
         length = len(closes)
         if length < period * 2:
             return [None] * length
@@ -277,12 +322,11 @@ class TechnicalIndicators:
             lc = abs(lows[i] - closes[i-1])
             tr[i] = max(hl, hc, lc)
 
-        # تجانس TR, +DM, -DM باستخدام Wilder's smoothing
+        # تجانس
         smoothed_tr = [None] * length
         smoothed_plus_dm = [None] * length
         smoothed_minus_dm = [None] * length
 
-        # أول قيمة متجانسة هي متوسط الفترة الأولى
         smoothed_tr[period-1] = sum(tr[:period]) / period
         smoothed_plus_dm[period-1] = sum(plus_dm[:period]) / period
         smoothed_minus_dm[period-1] = sum(minus_dm[:period]) / period
@@ -305,12 +349,10 @@ class TechnicalIndicators:
                 if di_sum != 0:
                     dx[i] = 100.0 * abs(plus_di[i] - minus_di[i]) / di_sum
 
-        # حساب ADX كمتوسط DX خلال الفترة
+        # ADX
         adx = [None] * length
-        # نحتاج أول period من DX لنبدأ ADX
         dx_values = [dx[i] for i in range(length) if dx[i] is not None]
         if len(dx_values) >= period:
-            # أول ADX في المؤشر (period-1 + period) لأننا نحتاج period من DX بعد أن يصبح DX متاحاً
             start_idx = (period - 1) + period
             if start_idx < length:
                 adx[start_idx] = sum(dx_values[:period]) / period
@@ -322,7 +364,7 @@ class TechnicalIndicators:
 
     @staticmethod
     def pivot_points(highs: List[float], lows: List[float], left: int = 5, right: int = 5) -> Tuple[List[bool], List[bool]]:
-        """تحديد القمم والقيعان المحلية بناءً على left/right"""
+        """تحديد القمم والقيعان المحلية"""
         length = len(highs)
         pivot_highs = [False] * length
         pivot_lows = [False] * length
@@ -357,20 +399,16 @@ class TechnicalIndicators:
     @staticmethod
     def detect_divergence(prices: List[float], oscillator: List[Optional[float]], window: int = 30) -> Dict[str, bool]:
         """كشف الانحراف (divergence) باستخدام القمم والقيعان المحلية - محسّن"""
-        # نأخذ آخر window شمعة مع تجاهل القيم الخالية
         recent_prices = prices[-window:]
         recent_osc = oscillator[-window:]
 
-        # إزالة القيم الخالية من المذبذب
         valid_indices = [i for i, v in enumerate(recent_osc) if v is not None]
-        if len(valid_indices) < 10:  # نحتاج عدد كافٍ من النقاط
+        if len(valid_indices) < 10:
             return {'bullish': False, 'bearish': False}
 
         prices_valid = [recent_prices[i] for i in valid_indices]
         osc_valid = [recent_osc[i] for i in valid_indices]
 
-        # البحث عن القمم المحلية في السعر والمذبذب
-        # نستخدم نافذة صغيرة للبحث عن القمم المحلية
         def find_peaks(arr):
             peaks = []
             for i in range(1, len(arr) - 1):
@@ -395,7 +433,6 @@ class TechnicalIndicators:
 
         # انحراف صاعد (Bullish): قاع سعري أدنى مع قاع مذبذب أعلى
         if len(price_troughs) >= 2 and len(osc_troughs) >= 2:
-            # آخر قاعين
             last_price_trough = price_troughs[-1]
             prev_price_trough = price_troughs[-2]
             last_osc_trough = osc_troughs[-1]
@@ -419,10 +456,9 @@ class TechnicalIndicators:
     @staticmethod
     def market_structure(highs: List[float], lows: List[float], closes: List[float],
                          pivot_highs: List[bool], pivot_lows: List[bool]) -> Dict[str, Any]:
-        """تحليل هيكل السوق: تحديد الاتجاه، كسر الهيكل (BOS)، تغير الطابع (CHoCH) - محسّن"""
+        """تحليل هيكل السوق: تحديد الاتجاه، كسر الهيكل (BOS)، تغير الطابع (CHoCH)"""
         length = len(highs)
 
-        # الحصول على آخر 5 قمم وقيعان صالحة
         high_indices = [i for i, v in enumerate(pivot_highs) if v]
         low_indices = [i for i, v in enumerate(pivot_lows) if v]
 
@@ -437,27 +473,20 @@ class TechnicalIndicators:
                 'last_low_idx': None
             }
 
-        # آخر قمة وقاع
         last_high_idx = high_indices[-1]
         last_low_idx = low_indices[-1]
-
-        # القمة والقبل الأخيرة
         prev_high_idx = high_indices[-2] if len(high_indices) >= 2 else None
         prev_low_idx = low_indices[-2] if len(low_indices) >= 2 else None
 
-        # تحديد الاتجاه الأساسي بناءً على سلاسل القمم والقيعان
         uptrend = False
         downtrend = False
 
         if prev_high_idx is not None and prev_low_idx is not None:
-            # اتجاه صاعد: قمم أعلى وقيعان أعلى
             if highs[last_high_idx] > highs[prev_high_idx] and lows[last_low_idx] > lows[prev_low_idx]:
                 uptrend = True
-            # اتجاه هابط: قمم أدنى وقيعان أدنى
             elif highs[last_high_idx] < highs[prev_high_idx] and lows[last_low_idx] < lows[prev_low_idx]:
                 downtrend = True
 
-        # كسر الهيكل (BOS): كسر آخر قمة في اتجاه صاعد، أو كسر آخر قاع في اتجاه هابط
         bos_up = False
         bos_down = False
         if uptrend and closes[-1] > highs[last_high_idx]:
@@ -465,7 +494,6 @@ class TechnicalIndicators:
         if downtrend and closes[-1] < lows[last_low_idx]:
             bos_down = True
 
-        # تغير الطابع (CHoCH): كسر القمة في اتجاه هابط (انعكاس صاعد) أو كسر القاع في اتجاه صاعد (انعكاس هابط)
         choch_up = False
         choch_down = False
         if downtrend and closes[-1] > highs[last_high_idx]:
@@ -485,8 +513,48 @@ class TechnicalIndicators:
             'last_low_idx': last_low_idx
         }
 
+    @staticmethod
+    def candle_patterns(open_prices: List[float], high: List[float], low: List[float], close: List[float]) -> Dict[str, bool]:
+        """كشف أنماط الشموع الرئيسية للقمم والقيعان"""
+        if len(close) < 5:
+            return {'shooting_star': False, 'hammer': False, 'engulfing_bear': False, 'engulfing_bull': False}
+
+        # الشموع الثلاث الأخيرة
+        o1, o2, o3 = open_prices[-1], open_prices[-2], open_prices[-3]
+        h1, h2, h3 = high[-1], high[-2], high[-3]
+        l1, l2, l3 = low[-1], low[-2], low[-3]
+        c1, c2, c3 = close[-1], close[-2], close[-3]
+
+        patterns = {
+            'shooting_star': False,
+            'hammer': False,
+            'engulfing_bear': False,
+            'engulfing_bull': False
+        }
+
+        # Shooting Star (قمة محتملة)
+        body1 = abs(c1 - o1)
+        upper_shadow1 = h1 - max(c1, o1)
+        lower_shadow1 = min(c1, o1) - l1
+        if upper_shadow1 > 2 * body1 and lower_shadow1 < 0.2 * body1 and c1 < o1:
+            patterns['shooting_star'] = True
+
+        # Hammer (قاع محتمل)
+        if lower_shadow1 > 2 * body1 and upper_shadow1 < 0.2 * body1 and c1 > o1:
+            patterns['hammer'] = True
+
+        # Bearish Engulfing (قمة)
+        if c2 > o2 and c1 < o1 and c1 < o2 and o1 > c2:
+            patterns['engulfing_bear'] = True
+
+        # Bullish Engulfing (قاع)
+        if c2 < o2 and c1 > o1 and c1 > o2 and o1 < c2:
+            patterns['engulfing_bull'] = True
+
+        return patterns
+
 # ======================
-# مدير الإشعارات (محدث)
+# مدير الإشعارات (محسّن)
 # ======================
 class NotificationManager:
     def __init__(self):
@@ -495,7 +563,7 @@ class NotificationManager:
         self.last_notification_time = {}       # (coin, type) -> datetime
         self.last_notification_price = {}      # (coin, type) -> price
         self.cooldown_base = AppConfig.COOLDOWN_SECONDS
-        self.cooldown_multiplier = {}           # (coin, type) -> multiplier for dynamic cooldown
+        self.cooldown_multiplier = {}           # (coin, type) -> multiplier
 
     def add(self, notification: Notification):
         self.history.append(notification)
@@ -509,7 +577,6 @@ class NotificationManager:
         now = datetime.now()
         key = (coin_symbol, signal_type)
 
-        # 1. Cooldown زمني
         last_time = self.last_notification_time.get(key)
         if last_time:
             delta = (now - last_time).total_seconds()
@@ -518,7 +585,6 @@ class NotificationManager:
             if delta < cooldown:
                 return False
 
-        # 2. Minimum price move
         last_price = self.last_notification_price.get(key)
         if last_price:
             price_move_pct = abs(current_price - last_price) / last_price * 100
@@ -552,8 +618,7 @@ class NotificationManager:
         if not self.should_send(signal.coin_symbol, signal.signal_type, signal.confidence, signal.price):
             return None
 
-        # إنشاء رسالة
-        title = f"{signal.signal_type} Detected: {signal.coin_name}"
+        title = f"{signal.signal_type} DETECTED: {signal.coin_name}"
         message = (
             f"{title}\n"
             f"Confidence: {signal.confidence:.1f}%\n"
@@ -563,7 +628,7 @@ class NotificationManager:
         )
 
         tags = "arrow_up" if signal.signal_type == "TOP" else "arrow_down"
-        priority = "4" if signal.confidence >= 85 else "3"
+        priority = "5" if signal.confidence >= 85 else "4" if signal.confidence >= 65 else "3"
 
         if self.send_ntfy(message, title, priority, tags):
             notification = Notification(
@@ -578,11 +643,8 @@ class NotificationManager:
             )
             self.add(notification)
 
-            # تحديث السجلات
             self.last_notification_time[key] = datetime.now()
             self.last_notification_price[key] = signal.price
-
-            # تحديث cooldown multiplier
             multiplier = self.cooldown_multiplier.get(key, 1.0)
             self.cooldown_multiplier[key] = min(multiplier * 1.5, 5.0)
 
@@ -594,19 +656,31 @@ class NotificationManager:
         self.cooldown_multiplier[key] = max(1.0, self.cooldown_multiplier.get(key, 1.0) * 0.8)
 
 # ======================
-# المدير الرئيسي لاكتشاف القمم والقيعان (محسن)
+# المدير الرئيسي لاكتشاف القمم والقيعان (محسّن)
 # ======================
 class TopBottomDetector:
     def __init__(self):
         self.detections: List[TopBottomSignal] = []
         self.last_update: Optional[datetime] = None
+        self.last_coins_update: Optional[datetime] = None
         self.notification_manager = NotificationManager()
         self.binance = BinanceClient()
         self.lock = Lock()
         self.cached_higher_tf_data: Dict[str, Any] = {}
 
+    def update_coins_list(self):
+        """تحديث قائمة العملات كل ساعة"""
+        now = datetime.now()
+        if not self.last_coins_update or (now - self.last_coins_update).seconds > 3600:
+            new_coins = AppConfig.get_top_coins(15)
+            if new_coins:
+                AppConfig.COINS = new_coins
+                self.last_coins_update = now
+                logger.info(f"🔄 تم تحديث قائمة العملات: {len(new_coins)} عملة")
+
     def update_all(self) -> bool:
         with self.lock:
+            self.update_coins_list()
             logger.info(f"🔄 Scanning {len(AppConfig.COINS)} coins for tops/bottoms (advanced mode)...")
             success_count = 0
 
@@ -629,7 +703,6 @@ class TopBottomDetector:
             return success_count > 0
 
     def _scan_coin_advanced(self, coin: CoinConfig) -> Optional[TopBottomSignal]:
-        # جلب البيانات للإطار الزمني الرئيسي والإطار الأعلى
         ohlcv = self.binance.fetch_ohlcv(coin.symbol, AppConfig.TIMEFRAME, AppConfig.MAX_CANDLES)
         if not ohlcv or len(ohlcv) < 50:
             return None
@@ -656,23 +729,21 @@ class TopBottomDetector:
         current_atr = atr[-1] if atr[-1] is not None else 0
         current_adx = adx[-1] if adx[-1] is not None else 20
 
-        # تحديد نوع السوق (رينج أم ترند) بناءً على ADX
+        # تحديد نوع السوق
         market_regime = 'trend' if current_adx > 25 else 'ranging'
 
         # Pivot High/Low
         pivot_highs, pivot_lows = TechnicalIndicators.pivot_points(highs, lows, AppConfig.PIVOT_LEFT, AppConfig.PIVOT_RIGHT)
 
-        # تحقق مما إذا كانت الشمعة الحالية قريبة من آخر Pivot حقيقي (ضمن ATR)
+        # تحقق من القرب من آخر Pivot حقيقي
         near_pivot_high = False
         near_pivot_low = False
 
-        # آخر 5 pivots
         valid_pivot_highs = [i for i, is_high in enumerate(pivot_highs) if is_high]
         valid_pivot_lows = [i for i, is_low in enumerate(pivot_lows) if is_low]
 
         if valid_pivot_highs and current_atr > 0:
             last_pivot_high_idx = valid_pivot_highs[-1]
-            # التأكد من أن الـ pivot ليس قديماً جداً (آخر 20 شمعة)
             if len(highs) - last_pivot_high_idx <= 20:
                 pivot_price = highs[last_pivot_high_idx]
                 if abs(current_price - pivot_price) <= current_atr * AppConfig.MIN_PIVOT_DISTANCE_ATR:
@@ -687,7 +758,7 @@ class TopBottomDetector:
 
         # Fractals
         fractal_up, fractal_down = TechnicalIndicators.fractal(highs, lows, AppConfig.FRACTAL_PERIOD)
-        last_fractal_up = any(fractal_up[-AppConfig.FRACTAL_PERIOD*3:])  # نافذة أوسع قليلاً
+        last_fractal_up = any(fractal_up[-AppConfig.FRACTAL_PERIOD*3:])
         last_fractal_down = any(fractal_down[-AppConfig.FRACTAL_PERIOD*3:])
 
         # Divergence
@@ -709,24 +780,26 @@ class TopBottomDetector:
             logger.debug(f"{coin.symbol} volatility too low ({atr_percent:.2f}%), skipping")
             return None
 
-        # حساب الثقة للقمم والقيعان
+        # أنماط الشموع
+        patterns = TechnicalIndicators.candle_patterns(opens, highs, lows, closes) if AppConfig.ENABLE_CANDLE_PATTERNS else {}
+
+        # حساب الثقة
         top_confidence = self._calculate_confidence(
             'TOP', current_price, closes, rsi, atr, current_adx,
             near_pivot_high, near_pivot_low,
             last_fractal_up, last_fractal_down,
-            divergence, ms, volume_spike, htf_confirmation, market_regime
+            divergence, ms, volume_spike, htf_confirmation, market_regime, patterns
         )
         bottom_confidence = self._calculate_confidence(
             'BOTTOM', current_price, closes, rsi, atr, current_adx,
             near_pivot_high, near_pivot_low,
             last_fractal_up, last_fractal_down,
-            divergence, ms, volume_spike, htf_confirmation, market_regime
+            divergence, ms, volume_spike, htf_confirmation, market_regime, patterns
         )
 
         # اختيار الإشارة
         signal = None
         if top_confidence >= AppConfig.TOP_CONFIDENCE_THRESHOLD and top_confidence > bottom_confidence:
-            # تحقق إضافي: إذا كان الإطار الأعلى في اتجاه صاعد لا نرسل قمة (إلا إذا كان هناك انعكاس واضح)
             if not htf_confirmation.get('trend_up', False) or ms.get('choch_down', False):
                 signal = TopBottomSignal(
                     coin_symbol=coin.symbol,
@@ -736,9 +809,9 @@ class TopBottomDetector:
                     price=current_price,
                     timestamp=datetime.now(),
                     indicators={
-                        'rsi': current_rsi,
-                        'atr_percent': atr_percent,
-                        'adx': current_adx,
+                        'rsi': round(current_rsi, 1),
+                        'atr_percent': round(atr_percent, 2),
+                        'adx': round(current_adx, 1),
                         'market_regime': market_regime,
                         'near_pivot_high': near_pivot_high,
                         'fractal_up': last_fractal_up,
@@ -746,7 +819,8 @@ class TopBottomDetector:
                         'ms_trend': ms['trend'],
                         'ms_choch_down': ms.get('choch_down', False),
                         'volume_spike': volume_spike,
-                        'htf_trend': htf_confirmation.get('trend', 'unknown')
+                        'htf_trend': htf_confirmation.get('trend', 'unknown'),
+                        'patterns': patterns
                     },
                     message=f"Top detected with {top_confidence:.1f}% confidence"
                 )
@@ -760,9 +834,9 @@ class TopBottomDetector:
                     price=current_price,
                     timestamp=datetime.now(),
                     indicators={
-                        'rsi': current_rsi,
-                        'atr_percent': atr_percent,
-                        'adx': current_adx,
+                        'rsi': round(current_rsi, 1),
+                        'atr_percent': round(atr_percent, 2),
+                        'adx': round(current_adx, 1),
                         'market_regime': market_regime,
                         'near_pivot_low': near_pivot_low,
                         'fractal_down': last_fractal_down,
@@ -770,7 +844,8 @@ class TopBottomDetector:
                         'ms_trend': ms['trend'],
                         'ms_choch_up': ms.get('choch_up', False),
                         'volume_spike': volume_spike,
-                        'htf_trend': htf_confirmation.get('trend', 'unknown')
+                        'htf_trend': htf_confirmation.get('trend', 'unknown'),
+                        'patterns': patterns
                     },
                     message=f"Bottom detected with {bottom_confidence:.1f}% confidence"
                 )
@@ -778,20 +853,17 @@ class TopBottomDetector:
         return signal
 
     def _check_higher_timeframe(self, symbol: str, ohlcv_htf: Optional[List]) -> Dict[str, Any]:
-        """تحليل الإطار الأعلى لتأكيد الاتجاه"""
         if not ohlcv_htf or len(ohlcv_htf) < 20:
             return {'trend': 'unknown', 'trend_up': False, 'trend_down': False, 'last_high': None, 'last_low': None}
         closes_htf = [c[4] for c in ohlcv_htf]
         highs_htf = [c[2] for c in ohlcv_htf]
         lows_htf = [c[3] for c in ohlcv_htf]
 
-        # SMA 20 لتحديد الاتجاه
         sma20 = TechnicalIndicators.sma(closes_htf, 20)
         current_sma = sma20[-1] if sma20[-1] is not None else closes_htf[-1]
         trend_up = closes_htf[-1] > current_sma
         trend_down = closes_htf[-1] < current_sma
 
-        # آخر قمة وقاع
         last_high = max(highs_htf[-5:])
         last_low = min(lows_htf[-5:])
 
@@ -811,8 +883,9 @@ class TopBottomDetector:
                               ms: Dict[str, Any],
                               volume_spike: bool,
                               htf_conf: Dict[str, Any],
-                              market_regime: str) -> float:
-        """حساب الثقة باستخدام نظام الأوزان الديناميكي"""
+                              market_regime: str,
+                              patterns: Dict[str, bool]) -> float:
+        """حساب الثقة باستخدام الأوزان وإضافة أنماط الشموع"""
         weights = AppConfig.WEIGHTS[market_regime]
 
         confidence = 0.0
@@ -857,6 +930,18 @@ class TopBottomDetector:
             confidence += 15
         if signal_type == 'BOTTOM' and htf_conf.get('trend_up', False):
             confidence += 15
+
+        # 8. Candle patterns
+        if signal_type == 'TOP':
+            if patterns.get('shooting_star', False):
+                confidence += 10
+            if patterns.get('engulfing_bear', False):
+                confidence += 15
+        if signal_type == 'BOTTOM':
+            if patterns.get('hammer', False):
+                confidence += 10
+            if patterns.get('engulfing_bull', False):
+                confidence += 15
 
         return min(confidence, 100)
 
@@ -904,11 +989,9 @@ app.secret_key = os.environ.get('SECRET_KEY', 'crypto-tops-bottoms-advanced-secr
 detector = TopBottomDetector()
 start_time = time.time()
 
-# تشغيل المحدّث الخلفي
 updater_thread = threading.Thread(target=background_updater, daemon=True)
 updater_thread.start()
 
-# تحديث أولي
 detector.update_all()
 
 # ======================
@@ -918,7 +1001,7 @@ detector.update_all()
 def index():
     detections = detector.get_recent_detections(10)
     stats = detector.get_stats()
-    return render_template('index.html', detections=detections, stats=stats)
+    return render_template('index_tops_bottoms.html', detections=detections, stats=stats)
 
 @app.route('/api/detections')
 def api_detections():
@@ -959,9 +1042,6 @@ def test_ntfy():
     success = detector.notification_manager.send_ntfy(msg, "Test", "3", "test_tube")
     return jsonify({'success': success})
 
-# ======================
-# إشعار بدء التشغيل
-# ======================
 def send_startup_notification():
     try:
         msg = (
@@ -980,17 +1060,13 @@ def delayed_startup():
 
 threading.Thread(target=delayed_startup, daemon=True).start()
 
-# ======================
-# التشغيل الرئيسي
-# ======================
 if __name__ == '__main__':
     logger.info("=" * 50)
-    logger.info("🚀 Crypto Tops & Bottoms Detector Advanced v2.1 (Fixed)")
+    logger.info("🚀 Crypto Tops & Bottoms Detector Advanced v3.0 (Enhanced)")
     logger.info(f"📊 Coins: {len(AppConfig.COINS)}")
     logger.info(f"🔄 Update every {AppConfig.UPDATE_INTERVAL//60} minutes")
     logger.info(f"📢 NTFY: {ExternalAPIConfig.NTFY_URL}")
     logger.info("=" * 50)
 
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5002))
     app.run(host='0.0.0.0', port=port)
-

@@ -1063,7 +1063,16 @@ class TopBottomDetector:
 
     def get_recent_detections(self, limit: int = 20) -> List[Dict]:
         recent = self.detections[-limit:] if self.detections else []
-        return [asdict(d) for d in recent]
+        result = []
+        for d in recent:
+            dict_data = asdict(d)
+            # تحويل SignalStrength إلى string
+            if 'strength' in dict_data and hasattr(dict_data['strength'], 'value'):
+                dict_data['strength'] = d.strength.value
+            if 'timestamp' in dict_data and isinstance(d.timestamp, datetime):
+                dict_data['timestamp'] = d.timestamp.isoformat()
+            result.append(dict_data)
+        return result
 
     def get_stats(self) -> Dict:
         now = datetime.now()

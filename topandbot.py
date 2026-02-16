@@ -636,52 +636,22 @@ class NotificationManager:
 
     def send_ntfy(self, message: str, title: str = "Crypto Top/Bottom", priority: str = "3", tags: str = "chart") -> bool:
         try:
-            # سجل القيم المستخدمة
-            logger.info(f"🔔 Attempting to send ntfy notification")
-            logger.info(f"   Topic: {ExternalAPIConfig.NTFY_TOPIC}")
-            logger.info(f"   URL: {ExternalAPIConfig.NTFY_URL}")
-            logger.info(f"   Title: {title}")
-            logger.info(f"   Priority: {priority}")
-            logger.info(f"   Tags: {tags}")
-            logger.info(f"   Message length: {len(message)} chars")
-        
             headers = {
                 "Title": title,
                 "Priority": priority,
                 "Tags": tags,
             }
-        
-            # سجل الـ headers
-            logger.info(f"   Headers: {headers}")
-        
-            # حاول الاتصال
-            logger.info("   Sending request to ntfy.sh...")
+            # تجاهل التحقق من SSL (حل مؤقت لمشكلة Render)
             resp = requests.post(
                 ExternalAPIConfig.NTFY_URL,
                 data=message.encode('utf-8'),
                 headers=headers,
-                timeout=5
+                timeout=5,
+                verify=False  # 👈 هذا السطر الجديد
             )
-        
-            # سجل النتيجة
-            logger.info(f"   Response status code: {resp.status_code}")
-            logger.info(f"   Response text: {resp.text[:100]}")  # أول 100 حرف فقط
-        
-            if resp.status_code == 200:
-                logger.info("✅ Notification sent successfully")
-                return True
-            else:
-                logger.error(f"❌ Notification failed with status {resp.status_code}")
-                return False
-            
-        except requests.exceptions.Timeout:
-            logger.error("❌ Timeout: Could not connect to ntfy.sh (server took too long)")
-            return False
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"❌ Connection error: Cannot reach ntfy.sh - {e}")
-            return False
+            return resp.status_code == 200
         except Exception as e:
-            logger.error(f"❌ Unexpected error in send_ntfy: {e}", exc_info=True)
+            logger.error(f"NTFY error: {e}")
             return False
 
     def create_notification(self, signal: TopBottomSignal) -> Optional[Notification]:

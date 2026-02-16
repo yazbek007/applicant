@@ -1,6 +1,6 @@
 """
-Crypto Tops & Bottoms Detector Bot - الإصدار المتقدم v4.0
-تحسينات شاملة: Heiken Ashi, ZigZag pivots, مؤشرات متعددة, انحراف متقدم, تأكيد الإشارات, إشارات متدرجة
+Crypto Tops & Bottoms Detector Bot - الإصدار المتقدم v4.1 (إصلاح الأخطاء)
+تم إصلاح: choppiness_index, ترميز NTFY, إشعارات بالإنجليزية
 """
 
 import os
@@ -10,18 +10,16 @@ import math
 import logging
 import threading
 import requests
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any, Union
-from dataclasses import dataclass, asdict, field
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass, asdict
 from enum import Enum
 from threading import Lock
-from collections import deque
 
 import numpy as np
 from flask import Flask, render_template, jsonify, request
 import ccxt
 import backoff
-from ratelimit import limits, RateLimitException
 
 # إعدادات التسجيل
 logging.basicConfig(
@@ -46,9 +44,9 @@ class CoinConfig:
     enabled: bool = True
 
 class SignalStrength(Enum):
-    WEAK = "ضعيف"
-    MODERATE = "متوسط"
-    STRONG = "قوي"
+    WEAK = "Weak"
+    MODERATE = "Moderate"
+    STRONG = "Strong"
 
 @dataclass
 class TopBottomSignal:
@@ -56,16 +54,15 @@ class TopBottomSignal:
     coin_name: str
     signal_type: str  # "TOP" or "BOTTOM"
     strength: SignalStrength
-    confidence: float  # 0-100
+    confidence: float
     price: float
     timestamp: datetime
     indicators: Dict[str, Any]
     message: str
-    confirmed: bool = False  # للإشارات المؤكدة فقط
+    confirmed: bool = False
 
 @dataclass
 class PendingSignal:
-    """إشارة محتملة في انتظار التأكيد"""
     coin_symbol: str
     coin_name: str
     signal_type: str
@@ -87,12 +84,11 @@ class Notification:
     price: float
 
 # ======================
-# إعدادات التطبيق (موسعة)
+# إعدادات التطبيق
 # ======================
 class AppConfig:
     @staticmethod
     def get_top_coins(limit=15):
-        """جلب أفضل العملات من حيث حجم التداول من Binance"""
         try:
             exchange = ccxt.binance()
             tickers = exchange.fetch_tickers()
@@ -108,12 +104,12 @@ class AppConfig:
                 if base not in EXCLUDED_COINS:
                     coins.append(CoinConfig(symbol, base, base, 'USDT'))
             if coins:
-                logger.info(f"✅ تم جلب {len(coins)} عملة من Binance")
+                logger.info(f"✅ Fetched {len(coins)} coins from Binance")
                 return coins
             else:
                 return AppConfig._get_default_coins()
         except Exception as e:
-            logger.error(f"❌ خطأ في جلب العملات: {e}")
+            logger.error(f"❌ Error fetching coins: {e}")
             return AppConfig._get_default_coins()
 
     @staticmethod
@@ -125,53 +121,40 @@ class AppConfig:
             CoinConfig("SOL/USDT", "Solana", "SOL", "USDT"),
             CoinConfig("XRP/USDT", "Ripple", "XRP", "USDT"),
             CoinConfig("ADA/USDT", "Cardano", "ADA", "USDT"),
-            CoinConfig("DOGE/USDT", "Dogecoin", "DOGE", "USDT"),
-            CoinConfig("AVAX/USDT", "Avalanche", "AVAX", "USDT"),
-            CoinConfig("DOT/USDT", "Polkadot", "DOT", "USDT"),
-            CoinConfig("MATIC/USDT", "Polygon", "MATIC", "USDT"),
         ]
 
     COINS = get_top_coins(15)
 
-    # الإطارات الزمنية
     TIMEFRAME = '15m'
-    HIGHER_TIMEFRAMES = ['1h', '4h']  # إطارات متعددة للتأكيد
-    MAX_CANDLES = 500  # زيادة لتغذية المؤشرات
+    HIGHER_TIMEFRAMES = ['1h', '4h']
+    MAX_CANDLES = 500
     MIN_CANDLES_REQUIRED = 100
 
-    # إعدادات Heiken Ashi
     ENABLE_HEIKEN_ASHI = True
 
-    # إعدادات Pivot بطريقة ZigZag
-    PIVOT_MIN_ATR_MULTIPLE = 2.0      # المسافة الدنيا بين القمم/القيعان (مضاعف ATR)
-    PIVOT_LOOKBACK = 30                # عدد الشموع للبحث عن القمم/القيعان
+    PIVOT_MIN_ATR_MULTIPLE = 2.0
+    PIVOT_LOOKBACK = 30
 
-    # Fractal (يبقى كما هو للتوافق)
     FRACTAL_PERIOD = 2
 
-    # عتبات الثقة (تعديل بعد التحسينات)
     TOP_CONFIDENCE_THRESHOLD = 65
     BOTTOM_CONFIDENCE_THRESHOLD = 65
 
-    UPDATE_INTERVAL = 180  # ثواني
+    UPDATE_INTERVAL = 180
 
-    # فلتر الإشعارات
     COOLDOWN_SECONDS = 300
     MIN_PRICE_MOVE_PERCENT = 0.8
     MIN_VOLATILITY_ATR_PERCENT = 0.4
 
-    # إعدادات التأكيد
-    CONFIRMATION_CANDLES = 1          # عدد الشموع للتأكيد
-    PENDING_SIGNAL_TIMEOUT = 3600     # ثواني (ساعة واحدة)
+    CONFIRMATION_CANDLES = 1
+    PENDING_SIGNAL_TIMEOUT = 3600
 
-    # مستويات الثقة للإشارات المتدرجة
     CONFIDENCE_LEVELS = {
         SignalStrength.WEAK: (50, 70),
         SignalStrength.MODERATE: (70, 85),
         SignalStrength.STRONG: (85, 100)
     }
 
-    # أوزان المؤشرات (سيتم استخدامها في الدمج غير الخطي)
     INDICATOR_WEIGHTS = {
         'pivot': 0.25,
         'rsi_div': 0.20,
@@ -186,7 +169,6 @@ class AppConfig:
         'choppiness': 0.05
     }
 
-    # أنماط الشموع
     ENABLE_CANDLE_PATTERNS = True
 
 # ======================
@@ -201,7 +183,7 @@ class ExternalAPIConfig:
     MAX_RETRIES = 2
 
 # ======================
-# Binance Client محدث
+# Binance Client
 # ======================
 class BinanceClient:
     def __init__(self):
@@ -218,7 +200,6 @@ class BinanceClient:
                 'maxRetriesOnFailure': 3,
             }
         })
-        self.session = requests.Session()
         self.last_request_time = {}
         self.min_request_interval = 1.5
 
@@ -246,19 +227,8 @@ class BinanceClient:
             else:
                 logger.warning(f"No data returned for {symbol}")
                 return None
-        except ccxt.RateLimitExceeded as e:
-            logger.warning(f"Rate limit exceeded for {symbol}, waiting longer...")
-            time.sleep(5)
-            return None
-        except ccxt.NetworkError as e:
-            logger.error(f"Network error for {symbol}: {e}")
-            time.sleep(3)
-            return None
-        except ccxt.ExchangeError as e:
-            logger.error(f"Exchange error for {symbol}: {e}")
-            return None
         except Exception as e:
-            logger.error(f"Unexpected error for {symbol}: {e}")
+            logger.error(f"Error fetching OHLCV for {symbol}: {e}")
             return None
 
     def fetch_ohlcv_with_fallback(self, symbol: str, timeframe: str = AppConfig.TIMEFRAME, limit: int = AppConfig.MAX_CANDLES) -> Optional[List]:
@@ -267,9 +237,7 @@ class BinanceClient:
             return data
         logger.info(f"Retrying {symbol} with smaller limit...")
         data = self.fetch_ohlcv(symbol, timeframe, min(limit, 200))
-        if data:
-            return data
-        return None
+        return data
 
     def fetch_ticker(self, symbol: str) -> Optional[Dict]:
         try:
@@ -288,16 +256,13 @@ class BinanceClient:
             return {}
 
 # ======================
-# المؤشرات الفنية المتقدمة
+# المؤشرات الفنية (مصححة)
 # ======================
 class TechnicalIndicators:
-    """مكتبة شاملة للمؤشرات الفنية"""
-
     @staticmethod
     def heiken_ashi(opens: List[float], highs: List[float], lows: List[float], closes: List[float]) -> Tuple[List[float], List[float], List[float], List[float]]:
-        """تحويل الشموع العادية إلى Heiken Ashi"""
         ha_close = [(o + h + l + c) / 4 for o, h, l, c in zip(opens, highs, lows, closes)]
-        ha_open = [opens[0]]  # أول شمعة HA تفتح بسعر افتتاح الشمعة العادية
+        ha_open = [opens[0]]
         for i in range(1, len(closes)):
             ha_open.append((ha_open[-1] + ha_close[i-1]) / 2)
         ha_high = [max(ha_open[i], highs[i], ha_close[i]) for i in range(len(closes))]
@@ -347,7 +312,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def macd(prices: List[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[List[Optional[float]], List[Optional[float]], List[Optional[float]]]:
-        """MACD line, signal line, histogram"""
         ema_fast = TechnicalIndicators.ema(prices, fast)
         ema_slow = TechnicalIndicators.ema(prices, slow)
         macd_line = [None] * len(prices)
@@ -355,7 +319,6 @@ class TechnicalIndicators:
             if ema_fast[i] is not None and ema_slow[i] is not None:
                 macd_line[i] = ema_fast[i] - ema_slow[i]
         signal_line = TechnicalIndicators.ema([x if x is not None else 0 for x in macd_line], signal)
-        # تصحيح signal_line للحفاظ على القيم None في البداية
         signal_line = [None if macd_line[i] is None else signal_line[i] for i in range(len(prices))]
         histogram = [None] * len(prices)
         for i in range(len(prices)):
@@ -365,7 +328,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def stochastic(highs: List[float], lows: List[float], closes: List[float], k_period: int = 14, d_period: int = 3) -> Tuple[List[Optional[float]], List[Optional[float]]]:
-        """Stochastic %K and %D"""
         k_values = [None] * len(closes)
         for i in range(k_period - 1, len(closes)):
             high_max = max(highs[i - k_period + 1:i + 1])
@@ -399,7 +361,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def obv(closes: List[float], volumes: List[float]) -> List[float]:
-        """On-Balance Volume"""
         obv_values = [0.0] * len(closes)
         for i in range(1, len(closes)):
             if closes[i] > closes[i-1]:
@@ -412,7 +373,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def mfi(highs: List[float], lows: List[float], closes: List[float], volumes: List[float], period: int = 14) -> List[Optional[float]]:
-        """Money Flow Index"""
         length = len(closes)
         if length < period + 1:
             return [None] * length
@@ -436,7 +396,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def bollinger_bands(prices: List[float], period: int = 20, std_dev: float = 2.0) -> Tuple[List[Optional[float]], List[Optional[float]], List[Optional[float]]]:
-        """Middle, Upper, Lower bands"""
         middle = TechnicalIndicators.sma(prices, period)
         upper = [None] * len(prices)
         lower = [None] * len(prices)
@@ -449,29 +408,29 @@ class TechnicalIndicators:
 
     @staticmethod
     def choppiness_index(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> List[Optional[float]]:
-        """Choppiness Index - يقيس تذبذب السوق (قيم عالية = سوق متذبذب)"""
         length = len(closes)
-        if length < period + 1:
+        if length < period * 2:
             return [None] * length
-        atr_sum = [0.0] * length
-        for i in range(period - 1, length):
-            atr_sum[i] = sum(TechnicalIndicators.atr(highs[i-period+1:i+1], lows[i-period+1:i+1], closes[i-period+1:i+1], period)[-period:])
-        high_max = [0.0] * length
-        low_min = [0.0] * length
-        for i in range(period - 1, length):
-            high_max[i] = max(highs[i-period+1:i+1])
-            low_min[i] = min(lows[i-period+1:i+1])
+
+        atr_values = TechnicalIndicators.atr(highs, lows, closes, period)
         choppiness = [None] * length
-        for i in range(period - 1, length):
-            if high_max[i] - low_min[i] != 0:
-                choppiness[i] = 100 * math.log10(atr_sum[i] / (high_max[i] - low_min[i])) / math.log10(period)
+
+        for i in range(period * 2 - 1, length):
+            # التأكد من أن جميع قيم ATR المطلوبة موجودة
+            atr_window = atr_values[i - period + 1:i + 1]
+            if any(v is None for v in atr_window):
+                continue
+            atr_sum = sum(atr_window)
+            high_max = max(highs[i - period + 1:i + 1])
+            low_min = min(lows[i - period + 1:i + 1])
+            if high_max - low_min != 0:
+                choppiness[i] = 100 * math.log10(atr_sum / (high_max - low_min)) / math.log10(period)
             else:
-                choppiness[i] = 0
+                choppiness[i] = 0.0
         return choppiness
 
     @staticmethod
     def zigzag_pivots(highs: List[float], lows: List[float], atr: List[Optional[float]], min_atr_multiple: float = 2.0, lookback: int = 30) -> Tuple[List[bool], List[bool]]:
-        """كشف القمم والقيعان بطريقة ZigZag مع مسافة ATR دنيا"""
         length = len(highs)
         pivot_highs = [False] * length
         pivot_lows = [False] * length
@@ -479,38 +438,36 @@ class TechnicalIndicators:
             return pivot_highs, pivot_lows
 
         last_pivot_idx = None
-        last_pivot_type = None  # 'high' or 'low'
+        last_pivot_type = None
         last_pivot_price = None
 
         for i in range(lookback, length - lookback):
-            # البحث عن قمة محلية
+            if atr[i] is None:
+                continue
+            # قمة
             window_highs = highs[i - lookback:i + lookback + 1]
             if highs[i] == max(window_highs) and highs[i] > highs[i-1] and highs[i] > highs[i+1]:
-                # تأكد من المسافة عن آخر قمة
                 if last_pivot_type == 'high' and last_pivot_idx is not None:
-                    if abs(highs[i] - last_pivot_price) < atr[i] * min_atr_multiple if atr[i] else 0:
+                    if abs(highs[i] - last_pivot_price) < atr[i] * min_atr_multiple:
                         continue
                 pivot_highs[i] = True
                 last_pivot_idx = i
                 last_pivot_type = 'high'
                 last_pivot_price = highs[i]
-
-            # البحث عن قاع محلي
+            # قاع
             window_lows = lows[i - lookback:i + lookback + 1]
             if lows[i] == min(window_lows) and lows[i] < lows[i-1] and lows[i] < lows[i+1]:
                 if last_pivot_type == 'low' and last_pivot_idx is not None:
-                    if abs(lows[i] - last_pivot_price) < atr[i] * min_atr_multiple if atr[i] else 0:
+                    if abs(lows[i] - last_pivot_price) < atr[i] * min_atr_multiple:
                         continue
                 pivot_lows[i] = True
                 last_pivot_idx = i
                 last_pivot_type = 'low'
                 last_pivot_price = lows[i]
-
         return pivot_highs, pivot_lows
 
     @staticmethod
     def detect_divergence(price: List[float], oscillator: List[Optional[float]], window: int = 40, hidden: bool = False) -> Dict[str, bool]:
-        """كشف الانحراف العادي والخفي"""
         recent_price = price[-window:]
         recent_osc = oscillator[-window:]
 
@@ -544,37 +501,19 @@ class TechnicalIndicators:
         bearish = False
 
         if not hidden:
-            # انحراف عادي
             if len(price_troughs) >= 2 and len(osc_troughs) >= 2:
-                last_price_trough = price_troughs[-1]
-                prev_price_trough = price_troughs[-2]
-                last_osc_trough = osc_troughs[-1]
-                prev_osc_trough = osc_troughs[-2]
-                if last_price_trough[1] < prev_price_trough[1] and last_osc_trough[1] > prev_osc_trough[1]:
+                if price_troughs[-1][1] < price_troughs[-2][1] and osc_troughs[-1][1] > osc_troughs[-2][1]:
                     bullish = True
             if len(price_peaks) >= 2 and len(osc_peaks) >= 2:
-                last_price_peak = price_peaks[-1]
-                prev_price_peak = price_peaks[-2]
-                last_osc_peak = osc_peaks[-1]
-                prev_osc_peak = osc_peaks[-2]
-                if last_price_peak[1] > prev_price_peak[1] and last_osc_peak[1] < prev_osc_peak[1]:
+                if price_peaks[-1][1] > price_peaks[-2][1] and osc_peaks[-1][1] < osc_peaks[-2][1]:
                     bearish = True
         else:
-            # انحراف خفي
             if len(price_troughs) >= 2 and len(osc_troughs) >= 2:
-                last_price_trough = price_troughs[-1]
-                prev_price_trough = price_troughs[-2]
-                last_osc_trough = osc_troughs[-1]
-                prev_osc_trough = osc_troughs[-2]
-                if last_price_trough[1] > prev_price_trough[1] and last_osc_trough[1] < prev_osc_trough[1]:
-                    bullish = True  # انحراف صاعد خفي
+                if price_troughs[-1][1] > price_troughs[-2][1] and osc_troughs[-1][1] < osc_troughs[-2][1]:
+                    bullish = True
             if len(price_peaks) >= 2 and len(osc_peaks) >= 2:
-                last_price_peak = price_peaks[-1]
-                prev_price_peak = price_peaks[-2]
-                last_osc_peak = osc_peaks[-1]
-                prev_osc_peak = osc_peaks[-2]
-                if last_price_peak[1] < prev_price_peak[1] and last_osc_peak[1] > prev_osc_peak[1]:
-                    bearish = True  # انحراف هابط خفي
+                if price_peaks[-1][1] < price_peaks[-2][1] and osc_peaks[-1][1] > osc_peaks[-2][1]:
+                    bearish = True
 
         return {'bullish': bullish, 'bearish': bearish}
 
@@ -595,26 +534,24 @@ class TechnicalIndicators:
     @staticmethod
     def market_structure(highs: List[float], lows: List[float], closes: List[float],
                          pivot_highs: List[bool], pivot_lows: List[bool]) -> Dict[str, Any]:
-        """تحليل هيكل السوق باستخدام نقاط الارتكاز"""
         high_indices = [i for i, v in enumerate(pivot_highs) if v]
         low_indices = [i for i, v in enumerate(pivot_lows) if v]
 
         if len(high_indices) < 2 or len(low_indices) < 2:
-            return {'trend': 'unknown', 'bos_up': False, 'bos_down': False, 'choch_up': False, 'choch_down': False}
+            return {'trend': 'unknown', 'bos_up': False, 'bos_down': False,
+                    'choch_up': False, 'choch_down': False}
 
         last_high_idx = high_indices[-1]
         last_low_idx = low_indices[-1]
-        prev_high_idx = high_indices[-2] if len(high_indices) >= 2 else None
-        prev_low_idx = low_indices[-2] if len(low_indices) >= 2 else None
+        prev_high_idx = high_indices[-2]
+        prev_low_idx = low_indices[-2]
 
         uptrend = False
         downtrend = False
-
-        if prev_high_idx is not None and prev_low_idx is not None:
-            if highs[last_high_idx] > highs[prev_high_idx] and lows[last_low_idx] > lows[prev_low_idx]:
-                uptrend = True
-            elif highs[last_high_idx] < highs[prev_high_idx] and lows[last_low_idx] < lows[prev_low_idx]:
-                downtrend = True
+        if highs[last_high_idx] > highs[prev_high_idx] and lows[last_low_idx] > lows[prev_low_idx]:
+            uptrend = True
+        elif highs[last_high_idx] < highs[prev_high_idx] and lows[last_low_idx] < lows[prev_low_idx]:
+            downtrend = True
 
         bos_up = uptrend and closes[-1] > highs[last_high_idx]
         bos_down = downtrend and closes[-1] < lows[last_low_idx]
@@ -632,28 +569,25 @@ class TechnicalIndicators:
 
     @staticmethod
     def candle_patterns(open_prices: List[float], high: List[float], low: List[float], close: List[float]) -> Dict[str, bool]:
-        """أنماط الشموع الأساسية"""
         if len(close) < 5:
             return {}
-        o1, o2, o3 = open_prices[-1], open_prices[-2], open_prices[-3]
-        h1, h2, h3 = high[-1], high[-2], high[-3]
-        l1, l2, l3 = low[-1], low[-2], low[-3]
-        c1, c2, c3 = close[-1], close[-2], close[-3]
+        o1, o2 = open_prices[-1], open_prices[-2]
+        h1, l1 = high[-1], low[-1]
+        c1, c2 = close[-1], close[-2]
 
-        patterns = {}
         body1 = abs(c1 - o1)
         upper_shadow1 = h1 - max(c1, o1)
         lower_shadow1 = min(c1, o1) - l1
 
+        patterns = {}
         patterns['shooting_star'] = (upper_shadow1 > 2 * body1 and lower_shadow1 < 0.2 * body1 and c1 < o1)
         patterns['hammer'] = (lower_shadow1 > 2 * body1 and upper_shadow1 < 0.2 * body1 and c1 > o1)
-        patterns['engulfing_bear'] = (c2 > o2 and c1 < o1 and c1 < o2 and o1 > c2)
-        patterns['engulfing_bull'] = (c2 < o2 and c1 > o1 and c1 > o2 and o1 < c2)
-        patterns['doji'] = (abs(c1 - o1) <= (h1 - l1) * 0.1)
+        patterns['engulfing_bear'] = (c2 > open_prices[-2] and c1 < o1 and c1 < open_prices[-2] and o1 > c2)
+        patterns['engulfing_bull'] = (c2 < open_prices[-2] and c1 > o1 and c1 > open_prices[-2] and o1 < c2)
         return patterns
 
 # ======================
-# مدير الإشعارات
+# مدير الإشعارات (إنجليزي)
 # ======================
 class NotificationManager:
     def __init__(self):
@@ -698,12 +632,11 @@ class NotificationManager:
                 "Title": title,
                 "Priority": priority,
                 "Tags": tags,
-                "Content-Type": "text/plain; charset=utf-8"
             }
-            safe_message = message.encode('ascii', errors='replace').decode('ascii')
+            # إرسال النص مباشرة بترميز utf-8
             resp = requests.post(
                 ExternalAPIConfig.NTFY_URL,
-                data=safe_message.encode('utf-8'),
+                data=message.encode('utf-8'),
                 headers=headers,
                 timeout=5
             )
@@ -714,7 +647,7 @@ class NotificationManager:
 
     def create_notification(self, signal: TopBottomSignal) -> Optional[Notification]:
         if not signal.confirmed:
-            return None  # نرسل فقط الإشارات المؤكدة
+            return None
 
         key = (signal.coin_symbol, signal.signal_type)
         if not self.should_send(signal.coin_symbol, signal.signal_type, signal.confidence, signal.price):
@@ -723,10 +656,10 @@ class NotificationManager:
         title = f"{signal.signal_type} {signal.strength.value}: {signal.coin_name}"
         message = (
             f"{title}\n"
-            f"الثقة: {signal.confidence:.1f}%\n"
-            f"السعر: ${signal.price:,.2f}\n"
-            f"الوقت: {signal.timestamp.strftime('%H:%M')}\n"
-            f"المؤشرات: {json.dumps(signal.indicators, default=str)}"
+            f"Confidence: {signal.confidence:.1f}%\n"
+            f"Price: ${signal.price:,.2f}\n"
+            f"Time: {signal.timestamp.strftime('%H:%M')}\n"
+            f"Indicators: {json.dumps(signal.indicators, default=str)}"
         )
 
         tags = "arrow_up" if signal.signal_type == "TOP" else "arrow_down"
@@ -753,17 +686,13 @@ class NotificationManager:
             return notification
         return None
 
-    def reset_cooldown(self, coin_symbol: str, signal_type: str):
-        key = (coin_symbol, signal_type)
-        self.cooldown_multiplier[key] = max(1.0, self.cooldown_multiplier.get(key, 1.0) * 0.8)
-
 # ======================
-# المدير الرئيسي للكشف (نسخة متطورة)
+# المدير الرئيسي للكشف
 # ======================
 class TopBottomDetector:
     def __init__(self):
-        self.detections: List[TopBottomSignal] = []  # الإشارات المؤكدة فقط
-        self.pending_signals: Dict[str, PendingSignal] = {}  # إشارات في انتظار التأكيد
+        self.detections: List[TopBottomSignal] = []
+        self.pending_signals: Dict[str, PendingSignal] = {}
         self.last_update: Optional[datetime] = None
         self.last_coins_update: Optional[datetime] = None
         self.notification_manager = NotificationManager()
@@ -778,12 +707,12 @@ class TopBottomDetector:
             if new_coins:
                 AppConfig.COINS = new_coins
                 self.last_coins_update = now
-                logger.info(f"🔄 تم تحديث قائمة العملات: {len(new_coins)} عملة")
+                logger.info(f"🔄 Coins list updated: {len(new_coins)} coins")
 
     def update_all(self) -> bool:
         with self.lock:
             self.update_coins_list()
-            logger.info(f"🔄 فحص {len(AppConfig.COINS)} عملة لاكتشاف القمم والقيعان (نسخة متطورة)...")
+            logger.info(f"🔄 Scanning {len(AppConfig.COINS)} coins...")
 
             success_count = 0
             failed_coins = []
@@ -803,28 +732,23 @@ class TopBottomDetector:
                             self.notification_manager.create_notification(signal)
                             success_count += 1
                         else:
-                            # تخزين الإشارة المحتملة للتأكيد لاحقاً
                             self._store_pending_signal(coin, signal)
                 except Exception as e:
-                    logger.error(f"خطأ في {coin.symbol}: {e}", exc_info=True)
+                    logger.error(f"Error on {coin.symbol}: {e}", exc_info=True)
                     failed_coins.append(coin)
 
-            # تنظيف الإشارات المعلقة القديمة
             self._cleanup_pending_signals()
-
             self.last_update = datetime.now()
             if len(self.detections) > 100:
                 self.detections = self.detections[-100:]
 
-            logger.info(f"✅ تم اكتشاف {success_count} إشارة مؤكدة")
+            logger.info(f"✅ Found {success_count} confirmed signals")
             return success_count > 0
 
     def _store_pending_signal(self, coin: CoinConfig, signal: TopBottomSignal):
-        """تخزين إشارة غير مؤكدة"""
         key = f"{coin.symbol}_{signal.signal_type}"
         existing = self.pending_signals.get(key)
         if existing:
-            # تحديث إذا كانت الثقة أعلى
             if signal.confidence > existing.confidence:
                 existing.confidence = signal.confidence
                 existing.indicators = signal.indicators
@@ -841,7 +765,6 @@ class TopBottomDetector:
             )
 
     def _cleanup_pending_signals(self):
-        """حذف الإشارات المعلقة القديمة"""
         now = datetime.now()
         expired_keys = []
         for key, pending in self.pending_signals.items():
@@ -851,13 +774,10 @@ class TopBottomDetector:
             del self.pending_signals[key]
 
     def _confirm_pending_signals(self, coin: CoinConfig, new_signal: Optional[TopBottomSignal]):
-        """التحقق من تأكيد الإشارات المعلقة بناءً على الشمعة الجديدة"""
         for key in list(self.pending_signals.keys()):
             if key.startswith(coin.symbol):
                 pending = self.pending_signals[key]
-                # إذا كانت الإشارة المعلقة لا تزال صالحة والشروط الجديدة تدعمها
                 if new_signal and new_signal.signal_type == pending.signal_type and new_signal.confidence >= pending.confidence * 0.8:
-                    # تأكيد الإشارة
                     confirmed_signal = TopBottomSignal(
                         coin_symbol=pending.coin_symbol,
                         coin_name=pending.coin_name,
@@ -867,19 +787,17 @@ class TopBottomDetector:
                         price=pending.price,
                         timestamp=datetime.now(),
                         indicators=pending.indicators,
-                        message=f"تأكيد {pending.signal_type} بعد {pending.retest_count+1} شمعة",
+                        message=f"Confirmed {pending.signal_type} after {pending.retest_count+1} candles",
                         confirmed=True
                     )
                     self.detections.append(confirmed_signal)
                     self.notification_manager.create_notification(confirmed_signal)
-                    logger.info(f"✅ تم تأكيد إشارة {pending.signal_type} لـ {pending.coin_symbol}")
+                    logger.info(f"✅ Confirmed {pending.signal_type} for {pending.coin_symbol}")
                     del self.pending_signals[key]
                 else:
-                    # إذا لم يتم التأكيد، نزيد عدد المحاولات
                     pending.retest_count += 1
                     if pending.retest_count > AppConfig.CONFIRMATION_CANDLES:
-                        # فشل التأكيد بعد العدد المطلوب من الشموع
-                        logger.debug(f"❌ إشارة {pending.signal_type} لـ {pending.coin_symbol} لم تتأكد بعد {AppConfig.CONFIRMATION_CANDLES} شموع")
+                        logger.debug(f"❌ Signal {pending.signal_type} for {pending.coin_symbol} not confirmed")
                         del self.pending_signals[key]
 
     def _confidence_to_strength(self, confidence: float) -> SignalStrength:
@@ -889,25 +807,20 @@ class TopBottomDetector:
         return SignalStrength.MODERATE
 
     def _scan_coin_advanced(self, coin: CoinConfig, pre_fetched_ticker: Optional[Dict] = None) -> List[TopBottomSignal]:
-        """مسح عملة واحدة وإرجاع قائمة بالإشارات (مؤكدة وغير مؤكدة)"""
         signals = []
 
-        # جلب البيانات للإطار الرئيسي
         ohlcv = self.binance.fetch_ohlcv_with_fallback(coin.symbol, AppConfig.TIMEFRAME, AppConfig.MAX_CANDLES)
         if not ohlcv or len(ohlcv) < AppConfig.MIN_CANDLES_REQUIRED:
             return signals
 
-        # استخراج الشموع
         opens = [c[1] for c in ohlcv]
         highs = [c[2] for c in ohlcv]
         lows = [c[3] for c in ohlcv]
         closes = [c[4] for c in ohlcv]
         volumes = [c[5] for c in ohlcv]
 
-        # تطبيق Heiken Ashi إذا كان مفعلاً
         if AppConfig.ENABLE_HEIKEN_ASHI:
             ha_open, ha_high, ha_low, ha_close = TechnicalIndicators.heiken_ashi(opens, highs, lows, closes)
-            # استخدام بيانات Heiken Ashi للمؤشرات التي تعتمد على السعر
             price_for_indicators = ha_close
             highs_for_indicators = ha_high
             lows_for_indicators = ha_low
@@ -918,41 +831,36 @@ class TopBottomDetector:
             lows_for_indicators = lows
             closes_for_indicators = closes
 
-        # المؤشرات الأساسية
+        # حساب المؤشرات
         rsi = TechnicalIndicators.rsi(price_for_indicators, 14)
-        atr = TechnicalIndicators.atr(highs, lows, closes, 14)  # ATR على الشموع الأصلية أفضل
-        macd_line, signal_line, macd_hist = TechnicalIndicators.macd(price_for_indicators)
-        stoch_k, stoch_d = TechnicalIndicators.stochastic(highs_for_indicators, lows_for_indicators, closes_for_indicators)
+        atr = TechnicalIndicators.atr(highs, lows, closes, 14)
+        macd_line, _, _ = TechnicalIndicators.macd(price_for_indicators)
+        stoch_k, _ = TechnicalIndicators.stochastic(highs_for_indicators, lows_for_indicators, closes_for_indicators)
         obv = TechnicalIndicators.obv(closes, volumes)
         mfi = TechnicalIndicators.mfi(highs, lows, closes, volumes)
         bb_mid, bb_upper, bb_lower = TechnicalIndicators.bollinger_bands(price_for_indicators)
         choppiness = TechnicalIndicators.choppiness_index(highs, lows, closes)
 
-        # نقاط الارتكاز ZigZag
         pivot_highs, pivot_lows = TechnicalIndicators.zigzag_pivots(
             highs, lows, atr,
             min_atr_multiple=AppConfig.PIVOT_MIN_ATR_MULTIPLE,
             lookback=AppConfig.PIVOT_LOOKBACK
         )
 
-        # كشف الانحراف على RSI, MACD, Stochastic
         rsi_div = TechnicalIndicators.detect_divergence(price_for_indicators, rsi)
         macd_div = TechnicalIndicators.detect_divergence(price_for_indicators, macd_line)
         stoch_div = TechnicalIndicators.detect_divergence(price_for_indicators, stoch_k)
 
-        # Fractal
         fractal_up, fractal_down = TechnicalIndicators.fractal(highs, lows, AppConfig.FRACTAL_PERIOD)
 
-        # هيكل السوق
         ms = TechnicalIndicators.market_structure(highs, lows, closes, pivot_highs, pivot_lows)
 
-        # أنماط الشموع
         patterns = TechnicalIndicators.candle_patterns(opens, highs, lows, closes) if AppConfig.ENABLE_CANDLE_PATTERNS else {}
 
-        # تحليل الإطار الزمني الأعلى
+        # تحليل الإطار الأعلى
         htf_conf = self._check_multiple_timeframes(coin.symbol)
 
-        # التايكر والسعر الحالي
+        # السعر الحالي
         if pre_fetched_ticker:
             ticker = pre_fetched_ticker
         else:
@@ -962,11 +870,11 @@ class TopBottomDetector:
         current_price = ticker['last']
 
         # فلتر التقلب
-        atr_percent = (atr[-1] / current_price * 100) if atr[-1] else 0
+        atr_percent = (atr[-1] / current_price * 100) if atr[-1] and current_price > 0 else 0
         if atr_percent < AppConfig.MIN_VOLATILITY_ATR_PERCENT:
             return signals
 
-        # حساب الثقة للقمة والقاع
+        # حساب الثقة
         top_confidence = self._calculate_confidence(
             'TOP', current_price, closes_for_indicators,
             rsi, macd_line, stoch_k, obv, mfi, bb_upper, bb_lower, choppiness,
@@ -984,7 +892,6 @@ class TopBottomDetector:
             ms, htf_conf, patterns, volumes
         )
 
-        # إنشاء الإشارات
         if top_confidence >= AppConfig.TOP_CONFIDENCE_THRESHOLD:
             signal = TopBottomSignal(
                 coin_symbol=coin.symbol,
@@ -1001,15 +908,15 @@ class TopBottomDetector:
                     'div_rsi_bear': rsi_div.get('bearish', False),
                     'div_macd_bear': macd_div.get('bearish', False),
                     'div_stoch_bear': stoch_div.get('bearish', False),
-                    'pivot_high': pivot_highs[-5:].count(True) > 0,
-                    'fractal_up': fractal_up[-5:].count(True) > 0,
+                    'pivot_high': any(pivot_highs[-5:]),
+                    'fractal_up': any(fractal_up[-5:]),
                     'ms_trend': ms['trend'],
                     'ms_choch_down': ms.get('choch_down', False),
                     'htf_conf': htf_conf,
                     'patterns': patterns
                 },
-                message=f"قمة محتملة بثقة {top_confidence:.1f}%",
-                confirmed=False  # تحتاج تأكيد
+                message=f"Potential TOP with {top_confidence:.1f}% confidence",
+                confirmed=False
             )
             signals.append(signal)
 
@@ -1029,25 +936,22 @@ class TopBottomDetector:
                     'div_rsi_bull': rsi_div.get('bullish', False),
                     'div_macd_bull': macd_div.get('bullish', False),
                     'div_stoch_bull': stoch_div.get('bullish', False),
-                    'pivot_low': pivot_lows[-5:].count(True) > 0,
-                    'fractal_down': fractal_down[-5:].count(True) > 0,
+                    'pivot_low': any(pivot_lows[-5:]),
+                    'fractal_down': any(fractal_down[-5:]),
                     'ms_trend': ms['trend'],
                     'ms_choch_up': ms.get('choch_up', False),
                     'htf_conf': htf_conf,
                     'patterns': patterns
                 },
-                message=f"قاع محتمل بثقة {bottom_confidence:.1f}%",
+                message=f"Potential BOTTOM with {bottom_confidence:.1f}% confidence",
                 confirmed=False
             )
             signals.append(signal)
 
-        # التحقق من الإشارات المعلقة لهذه العملة
         self._confirm_pending_signals(coin, signals[0] if signals else None)
-
         return signals
 
     def _check_multiple_timeframes(self, symbol: str) -> Dict[str, Any]:
-        """جلب وتحليل عدة إطارات زمنية أعلى"""
         result = {'trend': 'unknown', 'trend_up': False, 'trend_down': False}
         for tf in AppConfig.HIGHER_TIMEFRAMES:
             ohlcv = self.binance.fetch_ohlcv(symbol, tf, 50)
@@ -1058,9 +962,6 @@ class TopBottomDetector:
                 trend_up = closes[-1] > current_sma
                 trend_down = closes[-1] < current_sma
                 result[f'trend_{tf}'] = 'up' if trend_up else 'down' if trend_down else 'sideways'
-                result[f'trend_up_{tf}'] = trend_up
-                result[f'trend_down_{tf}'] = trend_down
-                # تبسيط: إذا كان أي إطار أعلى متوافق، نعتبره تأكيداً
                 if trend_up:
                     result['trend_up'] = True
                 if trend_down:
@@ -1077,105 +978,88 @@ class TopBottomDetector:
                               rsi_div: Dict[str, bool], macd_div: Dict[str, bool], stoch_div: Dict[str, bool],
                               ms: Dict[str, Any], htf_conf: Dict[str, Any],
                               patterns: Dict[str, bool], volumes: List[float]) -> float:
-        """حساب الثقة باستخدام الدمج غير الخطي (معادلة الاحتمال المركب)"""
         weights = AppConfig.INDICATOR_WEIGHTS
         prob = 0.0
-        total_weight = 0.0
 
-        # دالة مساعدة لإضافة مؤشر مع وزنه
         def add_indicator(condition: bool, weight_key: str):
-            nonlocal prob, total_weight
+            nonlocal prob
             if condition:
                 prob += weights.get(weight_key, 0) * 100
-                total_weight += weights.get(weight_key, 0)
 
-        # 1. Pivot قريب
+        # Pivot
         if signal_type == 'TOP' and any(pivot_highs[-5:]):
             add_indicator(True, 'pivot')
         if signal_type == 'BOTTOM' and any(pivot_lows[-5:]):
             add_indicator(True, 'pivot')
 
-        # 2. RSI Divergence
+        # Divergence
         if signal_type == 'TOP' and rsi_div.get('bearish', False):
             add_indicator(True, 'rsi_div')
         if signal_type == 'BOTTOM' and rsi_div.get('bullish', False):
             add_indicator(True, 'rsi_div')
-
-        # 3. MACD Divergence
         if signal_type == 'TOP' and macd_div.get('bearish', False):
             add_indicator(True, 'macd_div')
         if signal_type == 'BOTTOM' and macd_div.get('bullish', False):
             add_indicator(True, 'macd_div')
-
-        # 4. Stochastic Divergence
         if signal_type == 'TOP' and stoch_div.get('bearish', False):
             add_indicator(True, 'stoch_div')
         if signal_type == 'BOTTOM' and stoch_div.get('bullish', False):
             add_indicator(True, 'stoch_div')
 
-        # 5. Fractal
+        # Fractal
         if signal_type == 'TOP' and any(fractal_up[-5:]):
             add_indicator(True, 'fractal')
         if signal_type == 'BOTTOM' and any(fractal_down[-5:]):
             add_indicator(True, 'fractal')
 
-        # 6. Volume spike
+        # Volume spike
         avg_vol = sum(volumes[-20:-1]) / 19 if len(volumes) >= 20 else 0
         volume_spike = volumes[-1] > avg_vol * 1.5 if avg_vol > 0 else False
         if volume_spike:
             add_indicator(True, 'volume')
 
-        # 7. Market Structure Break
+        # Market structure
         if signal_type == 'TOP' and (ms.get('bos_down', False) or ms.get('choch_down', False)):
             add_indicator(True, 'msb')
         if signal_type == 'BOTTOM' and (ms.get('bos_up', False) or ms.get('choch_up', False)):
             add_indicator(True, 'msb')
 
-        # 8. Bollinger Bands
-        if signal_type == 'TOP' and bb_upper[-1] and price >= bb_upper[-1]:
+        # Bollinger
+        if signal_type == 'TOP' and bb_upper[-1] is not None and price >= bb_upper[-1]:
             add_indicator(True, 'bb')
-        if signal_type == 'BOTTOM' and bb_lower[-1] and price <= bb_lower[-1]:
+        if signal_type == 'BOTTOM' and bb_lower[-1] is not None and price <= bb_lower[-1]:
             add_indicator(True, 'bb')
 
-        # 9. OBV confirmation
+        # OBV
         obv_trend = obv[-1] > obv[-5] if len(obv) >= 5 else False
-        if signal_type == 'TOP' and not obv_trend:  # OBV يضعف
+        if signal_type == 'TOP' and not obv_trend:
             add_indicator(True, 'obv')
         if signal_type == 'BOTTOM' and obv_trend:
             add_indicator(True, 'obv')
 
-        # 10. MFI
-        if signal_type == 'TOP' and mfi[-1] and mfi[-1] > 80:
+        # MFI
+        if signal_type == 'TOP' and mfi[-1] is not None and mfi[-1] > 80:
             add_indicator(True, 'mfi')
-        if signal_type == 'BOTTOM' and mfi[-1] and mfi[-1] < 20:
+        if signal_type == 'BOTTOM' and mfi[-1] is not None and mfi[-1] < 20:
             add_indicator(True, 'mfi')
 
-        # 11. Choppiness (if low, better for trends)
-        if choppiness[-1] and choppiness[-1] < 40:
+        # Choppiness
+        if choppiness[-1] is not None and choppiness[-1] < 40:
             add_indicator(True, 'choppiness')
 
-        # 12. Candle patterns
+        # Patterns
         if signal_type == 'TOP' and (patterns.get('shooting_star') or patterns.get('engulfing_bear')):
-            add_indicator(True, 'fractal')  # نستخدم وزن fractal كبديل
+            add_indicator(True, 'fractal')
         if signal_type == 'BOTTOM' and (patterns.get('hammer') or patterns.get('engulfing_bull')):
             add_indicator(True, 'fractal')
 
-        # 13. Higher timeframe confirmation
+        # Higher timeframe
         if signal_type == 'TOP' and htf_conf.get('trend_down', False):
-            add_indicator(True, 'pivot')  # نضيف وزناً إضافياً
+            add_indicator(True, 'pivot')
         if signal_type == 'BOTTOM' and htf_conf.get('trend_up', False):
             add_indicator(True, 'pivot')
 
-        # إذا لم يتحقق أي شرط، نعيد 0
-        if total_weight == 0:
-            return 0.0
-
-        # المعادلة غير الخطية: prob هي مجموع الأوزان * 100، لكنها قد تتجاوز 100
-        # نقوم بتطبيع باستخدام صيغة تشبه الاحتمال المركب
-        # confidence = 100 * (1 - exp(-prob/50)) على سبيل المثال
-        # أو ببساطة نحدها بـ 100
-        confidence = min(prob, 100.0)
-        return confidence
+        return min(prob, 100.0)
 
     def get_recent_detections(self, limit: int = 20) -> List[Dict]:
         recent = self.detections[-limit:] if self.detections else []
@@ -1203,18 +1087,6 @@ class TopBottomDetector:
         }
 
 # ======================
-# المحدّث الخلفي
-# ======================
-def background_updater():
-    while True:
-        try:
-            detector.update_all()
-            time.sleep(AppConfig.UPDATE_INTERVAL)
-        except Exception as e:
-            logger.error(f"خطأ في التحديث: {e}")
-            time.sleep(60)
-
-# ======================
 # تطبيق Flask
 # ======================
 app = Flask(__name__)
@@ -1224,6 +1096,15 @@ start_time = time.time()
 
 updater_thread = threading.Thread(target=background_updater, daemon=True)
 updater_thread.start()
+
+def background_updater():
+    while True:
+        try:
+            detector.update_all()
+            time.sleep(AppConfig.UPDATE_INTERVAL)
+        except Exception as e:
+            logger.error(f"Update error: {e}")
+            time.sleep(60)
 
 # تحديث أولي
 detector.update_all()
@@ -1235,7 +1116,8 @@ detector.update_all()
 def index():
     detections = detector.get_recent_detections(10)
     stats = detector.get_stats()
-    return render_template('index_tops_bottoms_v4.html', detections=detections, stats=stats)
+    # استخدام القالب القديم مؤقتاً (يجب إنشاء القالب الجديد لاحقاً)
+    return render_template('index_tops_bottoms.html', detections=detections, stats=stats)
 
 @app.route('/api/detections')
 def api_detections():
@@ -1251,7 +1133,7 @@ def manual_update():
     success = detector.update_all()
     return jsonify({
         'status': 'success' if success else 'warning',
-        'message': 'تم الفحص',
+        'message': 'Scan completed',
         'timestamp': datetime.now().isoformat()
     })
 
@@ -1272,21 +1154,21 @@ def get_notifications():
 
 @app.route('/api/test_ntfy')
 def test_ntfy():
-    msg = "اختبار - بوت الكشف المتقدم عن القمم والقيعان يعمل"
-    success = detector.notification_manager.send_ntfy(msg, "اختبار", "3", "test_tube")
+    msg = "Test - Advanced Tops & Bottoms detector is working"
+    success = detector.notification_manager.send_ntfy(msg, "Test", "3", "test_tube")
     return jsonify({'success': success})
 
 def send_startup_notification():
     try:
         msg = (
-            f"تم تشغيل البوت المتقدم v4.0\n"
-            f"يتتبع {len(AppConfig.COINS)} عملة\n"
-            f"فترة التحديث: {AppConfig.UPDATE_INTERVAL//60} دقيقة\n"
-            f"عتبة الثقة: {AppConfig.TOP_CONFIDENCE_THRESHOLD}%"
+            f"Crypto Tops & Bottoms Detector Advanced v4.1 Started\n"
+            f"Tracking {len(AppConfig.COINS)} coins\n"
+            f"Update interval: {AppConfig.UPDATE_INTERVAL//60} minutes\n"
+            f"Threshold: {AppConfig.TOP_CONFIDENCE_THRESHOLD}%"
         )
-        detector.notification_manager.send_ntfy(msg, "بدء التشغيل", "3", "rocket")
+        detector.notification_manager.send_ntfy(msg, "System Started", "3", "rocket")
     except Exception as e:
-        logger.error(f"خطأ في إشعار البدء: {e}")
+        logger.error(f"Startup notification error: {e}")
 
 def delayed_startup():
     time.sleep(5)
@@ -1296,9 +1178,9 @@ threading.Thread(target=delayed_startup, daemon=True).start()
 
 if __name__ == '__main__':
     logger.info("=" * 50)
-    logger.info("🚀 بوت اكتشاف القمم والقيعان - الإصدار المتقدم v4.0")
-    logger.info(f"📊 العملات: {len(AppConfig.COINS)}")
-    logger.info(f"🔄 تحديث كل {AppConfig.UPDATE_INTERVAL//60} دقيقة")
+    logger.info("🚀 Crypto Tops & Bottoms Detector Advanced v4.1 (Bug fixes)")
+    logger.info(f"📊 Coins: {len(AppConfig.COINS)}")
+    logger.info(f"🔄 Update every {AppConfig.UPDATE_INTERVAL//60} minutes")
     logger.info(f"📢 NTFY: {ExternalAPIConfig.NTFY_URL}")
     logger.info("=" * 50)
 

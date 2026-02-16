@@ -177,7 +177,7 @@ class AppConfig:
 class ExternalAPIConfig:
     BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY', '')
     BINANCE_SECRET_KEY = os.environ.get('BINANCE_SECRET_KEY', '')
-    NTFY_TOPIC = os.environ.get('NTFY_TOPIC', 'crypto_tops_bottoms_v4')
+    NTFY_TOPIC = os.environ.get('NTFY_TOPIC', 'new_007')
     NTFY_URL = f"https://ntfy.sh/{NTFY_TOPIC}"
     REQUEST_TIMEOUT = 10
     MAX_RETRIES = 2

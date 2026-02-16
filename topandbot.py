@@ -1094,8 +1094,6 @@ app.secret_key = os.environ.get('SECRET_KEY', 'crypto-tops-bottoms-advanced-v4-s
 detector = TopBottomDetector()
 start_time = time.time()
 
-updater_thread = threading.Thread(target=background_updater, daemon=True)
-updater_thread.start()
 
 def background_updater():
     while True:
@@ -1105,6 +1103,10 @@ def background_updater():
         except Exception as e:
             logger.error(f"Update error: {e}")
             time.sleep(60)
+
+
+updater_thread = threading.Thread(target=background_updater, daemon=True)
+updater_thread.start()
 
 # تحديث أولي
 detector.update_all()

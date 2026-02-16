@@ -182,6 +182,14 @@ class ExternalAPIConfig:
     REQUEST_TIMEOUT = 10
     MAX_RETRIES = 2
 
+# بعد سطر ExternalAPIConfig
+logger.info("=" * 50)
+logger.info("📋 NTFY Configuration Check:")
+logger.info(f"   NTFY_TOPIC from env: {os.environ.get('NTFY_TOPIC', 'NOT SET')}")
+logger.info(f"   Final NTFY_TOPIC used: {ExternalAPIConfig.NTFY_TOPIC}")
+logger.info(f"   Final NTFY_URL used: {ExternalAPIConfig.NTFY_URL}")
+logger.info("=" * 50)
+
 # ======================
 # Binance Client
 # ======================
@@ -628,21 +636,52 @@ class NotificationManager:
 
     def send_ntfy(self, message: str, title: str = "Crypto Top/Bottom", priority: str = "3", tags: str = "chart") -> bool:
         try:
+            # سجل القيم المستخدمة
+            logger.info(f"🔔 Attempting to send ntfy notification")
+            logger.info(f"   Topic: {ExternalAPIConfig.NTFY_TOPIC}")
+            logger.info(f"   URL: {ExternalAPIConfig.NTFY_URL}")
+            logger.info(f"   Title: {title}")
+            logger.info(f"   Priority: {priority}")
+            logger.info(f"   Tags: {tags}")
+            logger.info(f"   Message length: {len(message)} chars")
+        
             headers = {
                 "Title": title,
                 "Priority": priority,
                 "Tags": tags,
             }
-            # إرسال النص مباشرة بترميز utf-8
+        
+            # سجل الـ headers
+            logger.info(f"   Headers: {headers}")
+        
+            # حاول الاتصال
+            logger.info("   Sending request to ntfy.sh...")
             resp = requests.post(
                 ExternalAPIConfig.NTFY_URL,
                 data=message.encode('utf-8'),
                 headers=headers,
                 timeout=5
             )
-            return resp.status_code == 200
+        
+            # سجل النتيجة
+            logger.info(f"   Response status code: {resp.status_code}")
+            logger.info(f"   Response text: {resp.text[:100]}")  # أول 100 حرف فقط
+        
+            if resp.status_code == 200:
+                logger.info("✅ Notification sent successfully")
+                return True
+            else:
+                logger.error(f"❌ Notification failed with status {resp.status_code}")
+                return False
+            
+        except requests.exceptions.Timeout:
+            logger.error("❌ Timeout: Could not connect to ntfy.sh (server took too long)")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"❌ Connection error: Cannot reach ntfy.sh - {e}")
+            return False
         except Exception as e:
-            logger.error(f"NTFY error: {e}")
+            logger.error(f"❌ Unexpected error in send_ntfy: {e}", exc_info=True)
             return False
 
     def create_notification(self, signal: TopBottomSignal) -> Optional[Notification]:
@@ -1129,6 +1168,50 @@ def index():
     stats = detector.get_stats()
     # استخدام القالب القديم مؤقتاً (يجب إنشاء القالب الجديد لاحقاً)
     return render_template('index_tops_bottoms.html', detections=detections, stats=stats)
+
+@app.route('/api/debug_ntfy')
+def debug_ntfy():
+    """Route للتشخيص - يعرض إعدادات ntfy ويختبر الاتصال"""
+    import socket
+    
+    results = {
+        'environment': {
+            'NTFY_TOPIC_env': os.environ.get('NTFY_TOPIC', 'NOT SET'),
+            'NTFY_TOPIC_final': ExternalAPIConfig.NTFY_TOPIC,
+            'NTFY_URL': ExternalAPIConfig.NTFY_URL,
+        },
+        'dns_test': None,
+        'connection_test': None,
+        'simple_post_test': None
+    }
+    
+    # 1. اختبار DNS
+    try:
+        ip = socket.gethostbyname('ntfy.sh')
+        results['dns_test'] = f"✅ ntfy.sh resolved to {ip}"
+    except Exception as e:
+        results['dns_test'] = f"❌ DNS failed: {e}"
+    
+    # 2. اختبار اتصال بسيط
+    try:
+        r = requests.get('https://ntfy.sh', timeout=5)
+        results['connection_test'] = f"✅ Website reachable (status {r.status_code})"
+    except Exception as e:
+        results['connection_test'] = f"❌ Cannot reach ntfy.sh: {e}"
+    
+    # 3. اختبار إرسال بسيط
+    try:
+        test_topic = f"test_{int(time.time())}"
+        r = requests.post(
+            f"https://ntfy.sh/{test_topic}",
+            data="Test from Render",
+            timeout=5
+        )
+        results['simple_post_test'] = f"✅ Test send worked (status {r.status_code})"
+    except Exception as e:
+        results['simple_post_test'] = f"❌ Test send failed: {e}"
+    
+    return jsonify(results)
 
 @app.route('/api/detections')
 def api_detections():
